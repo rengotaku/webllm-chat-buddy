@@ -1,54 +1,336 @@
-import { useEffect } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route, useNavigate, useLocation } from "react-router-dom";
-import { Layout } from "@/components";
-import { HomePage, UsersPage, LoginPage, NotFoundPage } from "@/pages";
-import { UNAUTHORIZED_EVENT } from "@/api";
+import React, { useState, useEffect, useRef } from "react";
+import { MLCEngine } from "@mlc-ai/web-llm";
+import {
+  hasWebGPU,
+  hasSpeechRecognition,
+  addMessage,
+  appendToken,
+  initLLMEngine,
+  streamChatResponse,
+  startListening,
+  mergeTranscript,
+} from "./lib";
+import type { Message } from "./lib";
+import { Mic, MicOff, Send, Loader2, AlertTriangle, Sparkles, Bot, User } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 1000 * 60 * 5, // 5 minutes
-      retry: 1,
-    },
-  },
-});
+export default function App() {
+  const [webgpuSupported, setWebgpuSupported] = useState<boolean>(true);
+  const [speechSupported, setSpeechSupported] = useState<boolean>(true);
 
-function UnauthorizedRedirect() {
-  const navigate = useNavigate();
-  const location = useLocation();
+  const [engine, setEngine] = useState<MLCEngine | null>(null);
+  const [isLoadingEngine, setIsLoadingEngine] = useState<boolean>(false);
+  const [progressPercent, setProgressPercent] = useState<number>(0);
+  const [progressText, setProgressText] = useState<string>("");
+  const [engineError, setEngineError] = useState<string | null>(null);
 
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputText, setInputText] = useState<string>("");
+  const [isManuallyEdited, setIsManuallyEdited] = useState<boolean>(false);
+  const [isListening, setIsListening] = useState<boolean>(false);
+  const [isGenerating, setIsGenerating] = useState<boolean>(false);
+
+  const activeListenerRef = useRef<{ stop: () => void } | null>(null);
+  const isManuallyEditedRef = useRef<boolean>(isManuallyEdited);
+  const isEngineInitializingRef = useRef<boolean>(false);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+
+  // Keep isManuallyEditedRef in sync
   useEffect(() => {
-    const handler = () => {
-      if (location.pathname === "/login") return;
-      navigate("/login", {
-        replace: true,
-        state: { from: location.pathname + location.search },
+    isManuallyEditedRef.current = isManuallyEdited;
+  }, [isManuallyEdited]);
+
+  // Scroll to bottom when messages update
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
+
+  // Initial capability check and engine loading (guarded against StrictMode double invocation)
+  useEffect(() => {
+    const hasGpu = hasWebGPU();
+    const hasSpeech = hasSpeechRecognition();
+    setWebgpuSupported(hasGpu);
+    setSpeechSupported(hasSpeech);
+
+    if (!hasGpu) {
+      return;
+    }
+
+    // Guard against React.StrictMode double-invocation
+    if (isEngineInitializingRef.current) {
+      return;
+    }
+    isEngineInitializingRef.current = true;
+
+    setIsLoadingEngine(true);
+    initLLMEngine({
+      onProgress: (progress, text) => {
+        setProgressPercent(Math.round(progress * 100));
+        setProgressText(text);
+      },
+    })
+      .then((engineInstance) => {
+        setEngine(engineInstance);
+        setIsLoadingEngine(false);
+      })
+      .catch((err: any) => {
+        setEngineError(err?.message || "モデルのロード中にエラーが発生しました。");
+        setIsLoadingEngine(false);
       });
-    };
-    window.addEventListener(UNAUTHORIZED_EVENT, handler);
-    return () => window.removeEventListener(UNAUTHORIZED_EVENT, handler);
-  }, [navigate, location.pathname, location.search]);
+  }, []);
 
-  return null;
-}
+  const handleMicToggle = () => {
+    if (!speechSupported) return;
 
-function App() {
+    if (isListening) {
+      if (activeListenerRef.current) {
+        activeListenerRef.current.stop();
+        activeListenerRef.current = null;
+      }
+      setIsListening(false);
+    } else {
+      setIsListening(true);
+      const listener = startListening(
+        (transcript) => {
+          setInputText((prev) =>
+            mergeTranscript(prev, transcript, isManuallyEditedRef.current)
+          );
+        },
+        {
+          onEnd: () => {
+            setIsListening(false);
+            activeListenerRef.current = null;
+          },
+        }
+      );
+      activeListenerRef.current = listener;
+    }
+  };
+
+  const handleSendMessage = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!inputText.trim() || !engine || isGenerating) return;
+
+    const userText = inputText.trim();
+    setInputText("");
+    setIsManuallyEdited(false);
+
+    if (isListening && activeListenerRef.current) {
+      activeListenerRef.current.stop();
+      activeListenerRef.current = null;
+      setIsListening(false);
+    }
+
+    const userMsgId = `user-${Date.now()}`;
+    const assistantMsgId = `assistant-${Date.now()}`;
+
+    const userMsg: Message = { id: userMsgId, role: "user", content: userText };
+    const assistantMsg: Message = { id: assistantMsgId, role: "assistant", content: "" };
+
+    setMessages((prev) => {
+      const withUser = addMessage(prev, userMsg);
+      return addMessage(withUser, assistantMsg);
+    });
+
+    setIsGenerating(true);
+
+    try {
+      const chatHistory = [
+        ...messages.map((m) => ({ role: m.role, content: m.content })),
+        { role: "user" as const, content: userText },
+      ];
+
+      await streamChatResponse(engine, chatHistory, (token) => {
+        setMessages((prev) => appendToken(prev, assistantMsgId, token));
+      });
+    } catch (err: any) {
+      console.error("Streaming chat error:", err);
+      setMessages((prev) =>
+        appendToken(
+          prev,
+          assistantMsgId,
+          "\n\n[エラー: 応答生成中に問題が発生しました]"
+        )
+      );
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   return (
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <UnauthorizedRedirect />
-        <Routes>
-          <Route path="/" element={<Layout />}>
-            <Route index element={<HomePage />} />
-            <Route path="users" element={<UsersPage />} />
-            <Route path="login" element={<LoginPage />} />
-            <Route path="*" element={<NotFoundPage />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </QueryClientProvider>
+    <div className="flex flex-col min-h-screen bg-slate-50 p-4 sm:p-6 md:p-8 max-w-4xl mx-auto">
+      <header className="mb-6 flex items-center justify-between border-b pb-4">
+        <div className="flex items-center gap-2">
+          <Sparkles className="size-6 text-indigo-600" />
+          <h1 className="text-xl font-bold tracking-tight text-slate-900">
+            WebLLM Chat Buddy
+          </h1>
+        </div>
+      </header>
+
+      {/* WebGPU Unsupported Warning */}
+      {!webgpuSupported && (
+        <div className="mb-6 rounded-lg bg-amber-50 p-4 border border-amber-200 flex items-start gap-3">
+          <AlertTriangle className="size-5 text-amber-600 shrink-0 mt-0.5" />
+          <div>
+            <h3 className="text-sm font-semibold text-amber-800">
+              WebGPU 非対応ブラウザ
+            </h3>
+            <p className="text-sm text-amber-700 mt-1">
+              このブラウザはWebGPUに対応していません。WebGPU対応のブラウザ（Chrome, Edge, Safari Preview等）をご利用ください。
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Engine Loading Progress */}
+      {webgpuSupported && isLoadingEngine && (
+        <Card className="mb-6">
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <Loader2 className="size-4 animate-spin text-indigo-600" />
+              AI モデルをダウンロード中 ({progressPercent}%)
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            <div className="w-full bg-slate-200 rounded-full h-2.5 overflow-hidden">
+              <div
+                className="bg-indigo-600 h-2.5 rounded-full transition-all duration-300"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+            <p className="text-xs text-slate-500 font-mono truncate">
+              {progressText || "モデルデータを初期化中..."}
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Engine Error */}
+      {engineError && (
+        <div className="mb-6 rounded-lg bg-red-50 p-4 border border-red-200 text-sm text-red-700">
+          {engineError}
+        </div>
+      )}
+
+      {/* Main Chat Area */}
+      <Card className="flex-1 flex flex-col min-h-[500px]">
+        <CardHeader className="border-b py-3">
+          <CardTitle className="text-sm font-medium text-slate-600">
+            チャット履歴
+          </CardTitle>
+        </CardHeader>
+
+        <CardContent className="flex-1 p-4 overflow-y-auto space-y-4 max-h-[600px]">
+          {messages.length === 0 ? (
+            <div className="h-full flex items-center justify-center text-center text-slate-400 py-12">
+              <p className="text-sm">
+                {webgpuSupported && !isLoadingEngine
+                  ? "メッセージを入力するか、マイクボタンで話しかけてください。"
+                  : "モデルのロードを待機中..."}
+              </p>
+            </div>
+          ) : (
+            messages.map((msg) => (
+              <div
+                key={msg.id}
+                className={`flex gap-3 ${
+                  msg.role === "user" ? "justify-end" : "justify-start"
+                }`}
+              >
+                {msg.role === "assistant" && (
+                  <div className="size-8 rounded-full bg-indigo-100 flex items-center justify-center shrink-0">
+                    <Bot className="size-4 text-indigo-600" />
+                  </div>
+                )}
+                <div
+                  className={`rounded-lg px-4 py-2.5 max-w-[80%] text-sm whitespace-pre-wrap ${
+                    msg.role === "user"
+                      ? "bg-indigo-600 text-white"
+                      : "bg-slate-100 text-slate-800"
+                  }`}
+                >
+                  {msg.content || (msg.role === "assistant" && isGenerating && "Thinking...")}
+                </div>
+                {msg.role === "user" && (
+                  <div className="size-8 rounded-full bg-slate-200 flex items-center justify-center shrink-0">
+                    <User className="size-4 text-slate-600" />
+                  </div>
+                )}
+              </div>
+            ))
+          )}
+          <div ref={messagesEndRef} />
+        </CardContent>
+
+        <CardFooter className="border-t p-3">
+          <form
+            onSubmit={handleSendMessage}
+            className="flex items-center gap-2 w-full"
+          >
+            {/* Speech Recognition Mic Button */}
+            <div className="relative">
+              <Button
+                type="button"
+                variant={isListening ? "destructive" : "outline"}
+                size="icon"
+                disabled={!webgpuSupported || !speechSupported || isLoadingEngine || isGenerating}
+                onClick={handleMicToggle}
+                title={
+                  !speechSupported
+                    ? "このブラウザは音声認識機能(Speech Recognition API)に対応していません"
+                    : isListening
+                    ? "音声認識を停止"
+                    : "音声認識を開始"
+                }
+              >
+                {isListening ? (
+                  <MicOff className="size-4 animate-pulse" />
+                ) : (
+                  <Mic className="size-4" />
+                )}
+              </Button>
+            </div>
+
+            {/* Input Text Box */}
+            <Input
+              value={inputText}
+              onChange={(e) => {
+                setInputText(e.target.value);
+                setIsManuallyEdited(true);
+              }}
+              placeholder={
+                !webgpuSupported
+                  ? "WebGPU非対応のため入力できません"
+                  : !speechSupported
+                  ? "メッセージを入力... (音声非対応)"
+                  : "メッセージを入力、またはマイクで音声入力..."
+              }
+              disabled={!webgpuSupported || isLoadingEngine || isGenerating}
+              className="flex-1"
+            />
+
+            {/* Send Button */}
+            <Button
+              type="submit"
+              disabled={
+                !webgpuSupported ||
+                isLoadingEngine ||
+                isGenerating ||
+                !inputText.trim()
+              }
+            >
+              {isGenerating ? (
+                <Loader2 className="size-4 animate-spin" />
+              ) : (
+                <Send className="size-4" />
+              )}
+            </Button>
+          </form>
+        </CardFooter>
+      </Card>
+    </div>
   );
 }
-
-export default App;
