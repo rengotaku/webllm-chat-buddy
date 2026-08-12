@@ -590,6 +590,77 @@ describe("App", () => {
     });
   });
 
+  describe("Case M4-5: unload待機中に再度切り替えたとき、中間の選択の初期化は開始されない", () => {
+    it("Bへの切替(unload待機中)にCへ切り替えると、Bのinit呼び出しはスキップされCのみ初期化される", async () => {
+      const user = userEvent.setup();
+
+      let resolveUnloadA: (() => void) | undefined;
+      const engineA = {
+        id: "engine-A",
+        unload: vi.fn(
+          () =>
+            new Promise<void>((resolve) => {
+              resolveUnloadA = resolve;
+            })
+        ),
+      } as unknown as MLCEngine;
+
+      let initCallCount = 0;
+      vi.mocked(llmEngine.initLLMEngine).mockImplementation(() => {
+        initCallCount += 1;
+        if (initCallCount === 1) {
+          return Promise.resolve(engineA);
+        }
+        // Whichever model ends up actually requested after A stays
+        // pending: this test only asserts on *which* model ids
+        // initLLMEngine gets called with, not on completing further loads.
+        return new Promise<MLCEngine>(() => {});
+      });
+
+      render(<App />);
+
+      // Wait for model A's load to complete.
+      await waitFor(() => {
+        expect(screen.getByRole("textbox")).not.toBeDisabled();
+      });
+      expect(llmEngine.initLLMEngine).toHaveBeenCalledTimes(1);
+
+      const modelAId = vi.mocked(llmEngine.initLLMEngine).mock.calls[0][0]?.modelId;
+      const [modelB, modelC] = MODEL_CATALOG.filter((m) => m.id !== modelAId);
+      expect(modelB).toBeDefined();
+      expect(modelC).toBeDefined();
+
+      const select = screen.getByRole("combobox", { name: "モデル" });
+
+      // (a) Switch to B: kicks off A's unload() (deferred, not yet resolved).
+      await user.selectOptions(select, modelB.id);
+      await waitFor(() => {
+        expect(engineA.unload).toHaveBeenCalledTimes(1);
+      });
+
+      // (b) Switch to C *before* A's unload() resolves.
+      await user.selectOptions(select, modelC.id);
+
+      // (c) Resolve A's unload().
+      await act(async () => {
+        resolveUnloadA?.();
+      });
+
+      // Only two initLLMEngine calls ever happen in total: the initial
+      // call for A, and one for C once A's engine has been released. B's
+      // intermediate selection must never trigger its own call.
+      await waitFor(() => {
+        expect(llmEngine.initLLMEngine).toHaveBeenCalledTimes(2);
+      });
+      expect(llmEngine.initLLMEngine).not.toHaveBeenCalledWith(
+        expect.objectContaining({ modelId: modelB.id })
+      );
+      expect(llmEngine.initLLMEngine).toHaveBeenLastCalledWith(
+        expect.objectContaining({ modelId: modelC.id })
+      );
+    });
+  });
+
   // 追加テスト: M3-2 と同型の非同期競合が、resolve 時の結果採用だけでなく
   // onProgress コールバックと catch(初期化失敗) 経路でも起き得るため、
   // それぞれ独立に検証する。理由は報告の「追加したテスト」を参照。

@@ -90,6 +90,12 @@ export default function App() {
   // cannot distinguish an A -> B -> A sequence's first and third runs, which
   // share the same model id.
   const initGenerationRef = useRef<number>(0);
+  // Tracks an in-flight "release the previously adopted engine" step. A
+  // rapid follow-up switch that arrives before that release settles reads
+  // engineRef.current as null (it was already cleared by the in-flight
+  // switch's setEngine(null)) and must wait for this same pending release
+  // instead of starting its own init concurrently with it.
+  const pendingDisposalRef = useRef<Promise<void> | null>(null);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   // Keep isManuallyEditedRef in sync
@@ -164,15 +170,35 @@ export default function App() {
         });
     };
 
+    // Only start loading if this run is still the latest generation once
+    // it actually gets its turn - an earlier run in the same rapid
+    // switching burst may have already been superseded while it waited.
+    const startInitIfCurrent = () => {
+      if (initGenerationRef.current !== myGeneration) return;
+      startInit();
+    };
+
     if (engineToDispose) {
       // Wait for the previous engine to fully release its GPU resources
       // before requesting the next one, so the two models never briefly
       // coexist in memory (which would double peak VRAM usage).
-      unloadEngineSafely(engineToDispose, "previous").then(() => {
-        startInit();
+      pendingDisposalRef.current = unloadEngineSafely(engineToDispose, "previous").then(
+        () => {
+          pendingDisposalRef.current = null;
+          startInitIfCurrent();
+        }
+      );
+    } else if (pendingDisposalRef.current) {
+      // A previous switch's release is still in flight (engineRef.current
+      // already reads null because that switch already called
+      // setEngine(null)). Wait for that same release instead of starting
+      // our own init concurrently - otherwise two models would load at
+      // once and double peak VRAM.
+      pendingDisposalRef.current.then(() => {
+        startInitIfCurrent();
       });
     } else {
-      startInit();
+      startInitIfCurrent();
     }
   }, [webgpuSupported, selectedModelId]);
 
