@@ -38,8 +38,10 @@ export function startListening(
   }
 
   const recognition = new SpeechRecognitionClass();
+  let isActive = true;
 
   recognition.onresult = (event: any) => {
+    if (!isActive) return;
     if (event.results && event.results[0] && event.results[0][0]) {
       const transcript = event.results[0][0].transcript;
       if (transcript) {
@@ -49,12 +51,14 @@ export function startListening(
   };
 
   recognition.onend = () => {
+    if (!isActive) return;
     if (options?.onEnd) {
       options.onEnd();
     }
   };
 
   recognition.onerror = (event: any) => {
+    if (!isActive) return;
     if (options?.onError) {
       options.onError(event);
     }
@@ -67,6 +71,10 @@ export function startListening(
 
   return {
     stop: () => {
+      isActive = false;
+      recognition.onresult = null;
+      recognition.onend = null;
+      recognition.onerror = null;
       if (recognition && typeof recognition.stop === 'function') {
         recognition.stop();
       }

@@ -1,43 +1,49 @@
-import { render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
-import { describe, it, expect } from "vitest";
+import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import App from "./App";
+import * as capabilities from "./lib/capabilities";
+
+vi.mock("./lib/capabilities", () => ({
+  hasWebGPU: vi.fn(),
+  hasSpeechRecognition: vi.fn(),
+}));
+
+vi.mock("./lib/llmEngine", () => ({
+  initLLMEngine: vi.fn().mockImplementation(() => new Promise(() => {})),
+  streamChatResponse: vi.fn(),
+  DEFAULT_MODEL_ID: "mock-model",
+}));
 
 describe("App", () => {
-  it("renders home page by default", () => {
-    render(<App />);
-    expect(screen.getByText("React SPA Boilerplate")).toBeInTheDocument();
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
-  it("navigates to users page", async () => {
-    const user = userEvent.setup();
+  it("WebGPU非対応時に代替メッセージが表示されチャット機能が無効化されること", () => {
+    vi.mocked(capabilities.hasWebGPU).mockReturnValue(false);
+    vi.mocked(capabilities.hasSpeechRecognition).mockReturnValue(true);
+
     render(<App />);
 
-    await user.click(screen.getAllByRole("link", { name: "Users" })[0]);
+    expect(
+      screen.getByText(
+        "このブラウザはWebGPUに対応していません。WebGPU対応のブラウザ（Chrome, Edge, Safari Preview等）をご利用ください。"
+      )
+    ).toBeInTheDocument();
 
-    await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Users" })).toBeInTheDocument();
-    });
+    const input = screen.getByRole("textbox");
+    expect(input).toBeDisabled();
   });
 
-  it("navigates back to home page", async () => {
-    const user = userEvent.setup();
+  it("Web Speech API非対応時にマイクボタンがdisabledになること", () => {
+    vi.mocked(capabilities.hasWebGPU).mockReturnValue(true);
+    vi.mocked(capabilities.hasSpeechRecognition).mockReturnValue(false);
+
     render(<App />);
 
-    await user.click(screen.getAllByRole("link", { name: "Users" })[0]);
-    await waitFor(() => {
-      expect(screen.getByRole("heading", { name: "Users" })).toBeInTheDocument();
-    });
-
-    await user.click(screen.getByRole("link", { name: "Home" }));
-    await waitFor(() => {
-      expect(screen.getByText("React SPA Boilerplate")).toBeInTheDocument();
-    });
-  });
-
-  it("shows navigation links", () => {
-    render(<App />);
-    expect(screen.getByRole("link", { name: "Home" })).toBeInTheDocument();
-    expect(screen.getAllByRole("link", { name: "Users" }).length).toBeGreaterThan(0);
+    const micButton = screen.getByTitle(
+      "このブラウザは音声認識機能(Speech Recognition API)に対応していません"
+    );
+    expect(micButton).toBeDisabled();
   });
 });

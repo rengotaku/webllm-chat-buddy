@@ -44,7 +44,7 @@ export default function App() {
 
   // Scroll to bottom when messages update
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    messagesEndRef.current?.scrollIntoView?.({ behavior: "smooth" });
   }, [messages]);
 
   // Initial capability check and engine loading (guarded against StrictMode double invocation)
