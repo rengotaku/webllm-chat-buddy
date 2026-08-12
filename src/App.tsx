@@ -11,7 +11,7 @@ import {
   mergeTranscript,
 } from "./lib";
 import type { Message } from "./lib";
-import { Mic, MicOff, Send, Loader2, AlertTriangle, Sparkles, Bot, User } from "lucide-react";
+import { Mic, MicOff, Send, Loader2, AlertTriangle, Sparkles, Bot, User, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
@@ -65,6 +65,8 @@ export default function App() {
     isEngineInitializingRef.current = true;
 
     setIsLoadingEngine(true);
+    setEngineError(null);
+
     initLLMEngine({
       onProgress: (progress, text) => {
         setProgressPercent(Math.round(progress * 100));
@@ -76,13 +78,15 @@ export default function App() {
         setIsLoadingEngine(false);
       })
       .catch((err: any) => {
-        setEngineError(err?.message || "モデルのロード中にエラーが発生しました。");
+        setEngineError(
+          err?.message || "モデルの読み込みに失敗しました。ページを再読み込みしてください。"
+        );
         setIsLoadingEngine(false);
       });
   }, []);
 
   const handleMicToggle = () => {
-    if (!speechSupported) return;
+    if (!speechSupported || !engine || !!engineError) return;
 
     if (isListening) {
       if (activeListenerRef.current) {
@@ -111,7 +115,7 @@ export default function App() {
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!inputText.trim() || !engine || isGenerating) return;
+    if (!inputText.trim() || !engine || isGenerating || !!engineError) return;
 
     const userText = inputText.trim();
     setInputText("");
@@ -158,6 +162,8 @@ export default function App() {
       setIsGenerating(false);
     }
   };
+
+  const isEngineReady = !!engine && !engineError && !isLoadingEngine;
 
   return (
     <div className="flex flex-col min-h-screen bg-slate-50 p-4 sm:p-6 md:p-8 max-w-4xl mx-auto">
@@ -210,8 +216,16 @@ export default function App() {
 
       {/* Engine Error */}
       {engineError && (
-        <div className="mb-6 rounded-lg bg-red-50 p-4 border border-red-200 text-sm text-red-700">
-          {engineError}
+        <div className="mb-6 rounded-lg bg-red-50 p-4 border border-red-200 flex items-start gap-3">
+          <XCircle className="size-5 text-red-600 shrink-0 mt-0.5" />
+          <div>
+            <h3 className="text-sm font-semibold text-red-800">
+              モデルの読み込みエラー
+            </h3>
+            <p className="text-sm text-red-700 mt-1">
+              {engineError} ページを再読み込みしてください。
+            </p>
+          </div>
         </div>
       )}
 
@@ -227,9 +241,13 @@ export default function App() {
           {messages.length === 0 ? (
             <div className="h-full flex items-center justify-center text-center text-slate-400 py-12">
               <p className="text-sm">
-                {webgpuSupported && !isLoadingEngine
-                  ? "メッセージを入力するか、マイクボタンで話しかけてください。"
-                  : "モデルのロードを待機中..."}
+                {!webgpuSupported
+                  ? "WebGPU非対応ブラウザのため機能は利用できません。"
+                  : engineError
+                  ? "モデルの初期化に失敗しました。ページをリロードしてください。"
+                  : isLoadingEngine
+                  ? "モデルのロードを待機中..."
+                  : "メッセージを入力するか、マイクボタンで話しかけてください。"}
               </p>
             </div>
           ) : (
@@ -276,11 +294,20 @@ export default function App() {
                 type="button"
                 variant={isListening ? "destructive" : "outline"}
                 size="icon"
-                disabled={!webgpuSupported || !speechSupported || isLoadingEngine || isGenerating}
+                disabled={
+                  !webgpuSupported ||
+                  !speechSupported ||
+                  !isEngineReady ||
+                  isGenerating
+                }
                 onClick={handleMicToggle}
                 title={
-                  !speechSupported
+                  !webgpuSupported
+                    ? "WebGPU非対応のため利用できません"
+                    : !speechSupported
                     ? "このブラウザは音声認識機能(Speech Recognition API)に対応していません"
+                    : !!engineError
+                    ? "モデルの初期化に失敗しているため利用できません"
                     : isListening
                     ? "音声認識を停止"
                     : "音声認識を開始"
@@ -304,11 +331,13 @@ export default function App() {
               placeholder={
                 !webgpuSupported
                   ? "WebGPU非対応のため入力できません"
+                  : !!engineError
+                  ? "モデルの読み込みに失敗しました。ページを再読み込みしてください"
                   : !speechSupported
                   ? "メッセージを入力... (音声非対応)"
                   : "メッセージを入力、またはマイクで音声入力..."
               }
-              disabled={!webgpuSupported || isLoadingEngine || isGenerating}
+              disabled={!webgpuSupported || !isEngineReady || isGenerating}
               className="flex-1"
             />
 
@@ -317,7 +346,7 @@ export default function App() {
               type="submit"
               disabled={
                 !webgpuSupported ||
-                isLoadingEngine ||
+                !isEngineReady ||
                 isGenerating ||
                 !inputText.trim()
               }
