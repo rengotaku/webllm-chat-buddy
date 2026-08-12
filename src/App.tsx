@@ -309,7 +309,7 @@ export default function App() {
 
       {/* WebGPU Unsupported Warning */}
       {!webgpuSupported && (
-        <div className="mb-4 sm:mb-6 shrink-0 rounded-lg bg-amber-50 p-4 border border-amber-200 flex items-start gap-3">
+        <div className="mb-4 sm:mb-6 shrink-0 max-h-[20dvh] overflow-y-auto rounded-lg bg-amber-50 p-4 border border-amber-200 flex items-start gap-3">
           <AlertTriangle className="size-5 text-amber-600 shrink-0 mt-0.5" />
           <div className="min-w-0">
             <h3 className="text-sm font-semibold text-amber-800">
@@ -350,7 +350,7 @@ export default function App() {
 
       {/* Engine Error */}
       {engineError && (
-        <div className="mb-4 sm:mb-6 shrink-0 rounded-lg bg-red-50 p-4 border border-red-200 flex items-start gap-3">
+        <div className="mb-4 sm:mb-6 shrink-0 max-h-[20dvh] overflow-y-auto rounded-lg bg-red-50 p-4 border border-red-200 flex items-start gap-3">
           <XCircle className="size-5 text-red-600 shrink-0 mt-0.5" />
           <div className="min-w-0">
             <h3 className="text-sm font-semibold text-red-800">モデルの読み込みエラー</h3>
@@ -369,7 +369,7 @@ export default function App() {
           </CardTitle>
         </CardHeader>
 
-        <CardContent className="flex-1 min-h-[200px] p-4 overflow-y-auto space-y-4">
+        <CardContent className="flex-1 min-h-12 p-4 overflow-y-auto space-y-4">
           {messages.length === 0 ? (
             <div className="h-full flex items-center justify-center text-center text-slate-400 py-12">
               <p className="text-sm">
