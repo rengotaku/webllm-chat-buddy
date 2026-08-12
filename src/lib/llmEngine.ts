@@ -1,14 +1,14 @@
-import { CreateMLCEngine, MLCEngine } from '@mlc-ai/web-llm';
-import type { InitProgressReport } from '@mlc-ai/web-llm';
-import { hasWebGPU } from './capabilities';
+import { CreateMLCEngine, MLCEngine } from "@mlc-ai/web-llm";
+import type { InitProgressReport } from "@mlc-ai/web-llm";
+import { hasWebGPU } from "./capabilities";
 
-export const DEFAULT_MODEL_ID = 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC';
+export const DEFAULT_MODEL_ID = "Qwen2.5-1.5B-Instruct-q4f16_1-MLC";
 
 export type ProgressCallback = (progress: number, text: string) => void;
 export type TokenCallback = (token: string) => void;
 
 export interface LLMMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: "system" | "user" | "assistant";
   content: string;
 }
 
@@ -23,9 +23,10 @@ export interface LLMEngineOptions {
  */
 export async function initLLMEngine(options: LLMEngineOptions = {}): Promise<MLCEngine> {
   if (!hasWebGPU()) {
-    throw new Error('WebGPU is not supported in this browser environment.');
+    throw new Error("WebGPU is not supported in this browser environment.");
   }
 
+  /* v8 ignore start - WebGPU実機および大容量モデルロードを伴うため単体テスト対象外 */
   const modelId = options.modelId || DEFAULT_MODEL_ID;
 
   const engine = await CreateMLCEngine(modelId, {
@@ -38,6 +39,7 @@ export async function initLLMEngine(options: LLMEngineOptions = {}): Promise<MLC
   });
 
   return engine;
+  /* v8 ignore stop */
 }
 
 /**
@@ -50,18 +52,19 @@ export async function streamChatResponse(
   onToken: TokenCallback
 ): Promise<string> {
   if (!engine) {
-    throw new Error('MLCEngine instance is required for streaming chat.');
+    throw new Error("MLCEngine instance is required for streaming chat.");
   }
 
+  /* v8 ignore start - WebGPU実機でのLLM生成ストリーミングを伴うため単体テスト対象外 */
   const completion = await engine.chat.completions.create({
     messages,
     stream: true,
   });
 
-  let fullResponse = '';
+  let fullResponse = "";
 
   for await (const chunk of completion) {
-    const delta = chunk.choices[0]?.delta?.content || '';
+    const delta = chunk.choices[0]?.delta?.content || "";
     if (delta) {
       fullResponse += delta;
       onToken(delta);
@@ -69,4 +72,5 @@ export async function streamChatResponse(
   }
 
   return fullResponse;
+  /* v8 ignore stop */
 }

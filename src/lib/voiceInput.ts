@@ -1,7 +1,38 @@
 export type VoiceInputOptions = {
   onEnd?: () => void;
-  onError?: (error: any) => void;
+  onError?: (error: unknown) => void;
 };
+
+export interface SpeechRecognitionAlternativeLike {
+  transcript: string;
+}
+
+export interface SpeechRecognitionResultLike {
+  [index: number]: SpeechRecognitionAlternativeLike;
+  0: SpeechRecognitionAlternativeLike;
+}
+
+export interface SpeechRecognitionResultListLike {
+  [index: number]: SpeechRecognitionResultLike;
+  0: SpeechRecognitionResultLike;
+}
+
+export interface SpeechRecognitionEventLike {
+  results: SpeechRecognitionResultListLike;
+}
+
+export interface SpeechRecognitionErrorEventLike {
+  error?: unknown;
+  message?: string;
+}
+
+export interface SpeechRecognitionLike {
+  start: () => void;
+  stop: () => void;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  onend: (() => void) | null;
+  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
+}
 
 export function mergeTranscript(
   currentInput: string,
@@ -22,13 +53,13 @@ export function startListening(
   onTranscript: (text: string) => void,
   options?: VoiceInputOptions
 ): { stop: () => void } {
-  if (typeof window === 'undefined') {
+  if (typeof window === "undefined") {
     return { stop: () => {} };
   }
 
   const win = window as unknown as {
-    SpeechRecognition?: new () => any;
-    webkitSpeechRecognition?: new () => any;
+    SpeechRecognition?: new () => SpeechRecognitionLike;
+    webkitSpeechRecognition?: new () => SpeechRecognitionLike;
   };
 
   const SpeechRecognitionClass = win.SpeechRecognition || win.webkitSpeechRecognition;
@@ -40,7 +71,7 @@ export function startListening(
   const recognition = new SpeechRecognitionClass();
   let isActive = true;
 
-  recognition.onresult = (event: any) => {
+  recognition.onresult = (event: SpeechRecognitionEventLike) => {
     if (!isActive) return;
     if (event.results && event.results[0] && event.results[0][0]) {
       const transcript = event.results[0][0].transcript;
@@ -57,7 +88,7 @@ export function startListening(
     }
   };
 
-  recognition.onerror = (event: any) => {
+  recognition.onerror = (event: SpeechRecognitionErrorEventLike) => {
     if (!isActive) return;
     if (options?.onError) {
       options.onError(event);
@@ -75,7 +106,7 @@ export function startListening(
       recognition.onresult = null;
       recognition.onend = null;
       recognition.onerror = null;
-      if (recognition && typeof recognition.stop === 'function') {
+      if (recognition && typeof recognition.stop === "function") {
         recognition.stop();
       }
     },

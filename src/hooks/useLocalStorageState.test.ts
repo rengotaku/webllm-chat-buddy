@@ -61,8 +61,7 @@ describe("useLocalStorageState", () => {
     localStorage.setItem(TEST_KEY, "invalid-json-{");
 
     let hookResult:
-      | { current: ReturnType<typeof useLocalStorageState<string>> }
-      | undefined;
+      { current: ReturnType<typeof useLocalStorageState<string>> } | undefined;
     expect(() => {
       const { result } = renderHook(() => useLocalStorageState(TEST_KEY, "fallback"));
       hookResult = result;

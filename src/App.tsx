@@ -11,14 +11,30 @@ import {
   mergeTranscript,
 } from "./lib";
 import type { Message } from "./lib";
-import { Mic, MicOff, Send, Loader2, AlertTriangle, Sparkles, Bot, User, XCircle } from "lucide-react";
+import {
+  Mic,
+  MicOff,
+  Send,
+  Loader2,
+  AlertTriangle,
+  Sparkles,
+  Bot,
+  User,
+  XCircle,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Card, CardContent, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardFooter,
+} from "@/components/ui/card";
 
 export default function App() {
-  const [webgpuSupported, setWebgpuSupported] = useState<boolean>(true);
-  const [speechSupported, setSpeechSupported] = useState<boolean>(true);
+  const [webgpuSupported] = useState<boolean>(() => hasWebGPU());
+  const [speechSupported] = useState<boolean>(() => hasSpeechRecognition());
 
   const [engine, setEngine] = useState<MLCEngine | null>(null);
   const [isLoadingEngine, setIsLoadingEngine] = useState<boolean>(false);
@@ -49,12 +65,7 @@ export default function App() {
 
   // Initial capability check and engine loading (guarded against StrictMode double invocation)
   useEffect(() => {
-    const hasGpu = hasWebGPU();
-    const hasSpeech = hasSpeechRecognition();
-    setWebgpuSupported(hasGpu);
-    setSpeechSupported(hasSpeech);
-
-    if (!hasGpu) {
+    if (!webgpuSupported) {
       return;
     }
 
@@ -77,16 +88,18 @@ export default function App() {
         setEngine(engineInstance);
         setIsLoadingEngine(false);
       })
-      .catch((err: any) => {
+      .catch((err: unknown) => {
+        const errorMessage = err instanceof Error ? err.message : String(err);
         setEngineError(
-          err?.message || "モデルの読み込みに失敗しました。ページを再読み込みしてください。"
+          errorMessage ||
+            "モデルの読み込みに失敗しました。ページを再読み込みしてください。"
         );
         setIsLoadingEngine(false);
       });
-  }, []);
+  }, [webgpuSupported]);
 
   const handleMicToggle = () => {
-    if (!speechSupported || !engine || !!engineError) return;
+    if (!speechSupported || !engine || engineError) return;
 
     if (isListening) {
       if (activeListenerRef.current) {
@@ -115,7 +128,7 @@ export default function App() {
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!inputText.trim() || !engine || isGenerating || !!engineError) return;
+    if (!inputText.trim() || !engine || isGenerating || engineError) return;
 
     const userText = inputText.trim();
     setInputText("");
@@ -149,21 +162,17 @@ export default function App() {
       await streamChatResponse(engine, chatHistory, (token) => {
         setMessages((prev) => appendToken(prev, assistantMsgId, token));
       });
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Streaming chat error:", err);
       setMessages((prev) =>
-        appendToken(
-          prev,
-          assistantMsgId,
-          "\n\n[エラー: 応答生成中に問題が発生しました]"
-        )
+        appendToken(prev, assistantMsgId, "\n\n[エラー: 応答生成中に問題が発生しました]")
       );
     } finally {
       setIsGenerating(false);
     }
   };
 
-  const isEngineReady = !!engine && !engineError && !isLoadingEngine;
+  const isEngineReady = Boolean(engine) && !engineError && !isLoadingEngine;
 
   return (
     <div className="flex flex-col min-h-screen bg-slate-50 p-4 sm:p-6 md:p-8 max-w-4xl mx-auto">
@@ -185,7 +194,8 @@ export default function App() {
               WebGPU 非対応ブラウザ
             </h3>
             <p className="text-sm text-amber-700 mt-1">
-              このブラウザはWebGPUに対応していません。WebGPU対応のブラウザ（Chrome, Edge, Safari Preview等）をご利用ください。
+              このブラウザはWebGPUに対応していません。WebGPU対応のブラウザ（Chrome, Edge,
+              Safari Preview等）をご利用ください。
             </p>
           </div>
         </div>
@@ -219,9 +229,7 @@ export default function App() {
         <div className="mb-6 rounded-lg bg-red-50 p-4 border border-red-200 flex items-start gap-3">
           <XCircle className="size-5 text-red-600 shrink-0 mt-0.5" />
           <div>
-            <h3 className="text-sm font-semibold text-red-800">
-              モデルの読み込みエラー
-            </h3>
+            <h3 className="text-sm font-semibold text-red-800">モデルの読み込みエラー</h3>
             <p className="text-sm text-red-700 mt-1">
               {engineError} ページを再読み込みしてください。
             </p>
@@ -244,10 +252,10 @@ export default function App() {
                 {!webgpuSupported
                   ? "WebGPU非対応ブラウザのため機能は利用できません。"
                   : engineError
-                  ? "モデルの初期化に失敗しました。ページをリロードしてください。"
-                  : isLoadingEngine
-                  ? "モデルのロードを待機中..."
-                  : "メッセージを入力するか、マイクボタンで話しかけてください。"}
+                    ? "モデルの初期化に失敗しました。ページをリロードしてください。"
+                    : isLoadingEngine
+                      ? "モデルのロードを待機中..."
+                      : "メッセージを入力するか、マイクボタンで話しかけてください。"}
               </p>
             </div>
           ) : (
@@ -270,7 +278,8 @@ export default function App() {
                       : "bg-slate-100 text-slate-800"
                   }`}
                 >
-                  {msg.content || (msg.role === "assistant" && isGenerating && "Thinking...")}
+                  {msg.content ||
+                    (msg.role === "assistant" && isGenerating && "Thinking...")}
                 </div>
                 {msg.role === "user" && (
                   <div className="size-8 rounded-full bg-slate-200 flex items-center justify-center shrink-0">
@@ -284,10 +293,7 @@ export default function App() {
         </CardContent>
 
         <CardFooter className="border-t p-3">
-          <form
-            onSubmit={handleSendMessage}
-            className="flex items-center gap-2 w-full"
-          >
+          <form onSubmit={handleSendMessage} className="flex items-center gap-2 w-full">
             {/* Speech Recognition Mic Button */}
             <div className="relative">
               <Button
@@ -295,22 +301,19 @@ export default function App() {
                 variant={isListening ? "destructive" : "outline"}
                 size="icon"
                 disabled={
-                  !webgpuSupported ||
-                  !speechSupported ||
-                  !isEngineReady ||
-                  isGenerating
+                  !webgpuSupported || !speechSupported || !isEngineReady || isGenerating
                 }
                 onClick={handleMicToggle}
                 title={
                   !webgpuSupported
                     ? "WebGPU非対応のため利用できません"
                     : !speechSupported
-                    ? "このブラウザは音声認識機能(Speech Recognition API)に対応していません"
-                    : !!engineError
-                    ? "モデルの初期化に失敗しているため利用できません"
-                    : isListening
-                    ? "音声認識を停止"
-                    : "音声認識を開始"
+                      ? "このブラウザは音声認識機能(Speech Recognition API)に対応していません"
+                      : engineError
+                        ? "モデルの初期化に失敗しているため利用できません"
+                        : isListening
+                          ? "音声認識を停止"
+                          : "音声認識を開始"
                 }
               >
                 {isListening ? (
@@ -331,11 +334,11 @@ export default function App() {
               placeholder={
                 !webgpuSupported
                   ? "WebGPU非対応のため入力できません"
-                  : !!engineError
-                  ? "モデルの読み込みに失敗しました。ページを再読み込みしてください"
-                  : !speechSupported
-                  ? "メッセージを入力... (音声非対応)"
-                  : "メッセージを入力、またはマイクで音声入力..."
+                  : engineError
+                    ? "モデルの読み込みに失敗しました。ページを再読み込みしてください"
+                    : !speechSupported
+                      ? "メッセージを入力... (音声非対応)"
+                      : "メッセージを入力、またはマイクで音声入力..."
               }
               disabled={!webgpuSupported || !isEngineReady || isGenerating}
               className="flex-1"
@@ -345,10 +348,7 @@ export default function App() {
             <Button
               type="submit"
               disabled={
-                !webgpuSupported ||
-                !isEngineReady ||
-                isGenerating ||
-                !inputText.trim()
+                !webgpuSupported || !isEngineReady || isGenerating || !inputText.trim()
               }
             >
               {isGenerating ? (
