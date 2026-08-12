@@ -9,8 +9,12 @@ import {
   streamChatResponse,
   startListening,
   mergeTranscript,
+  MODEL_CATALOG,
+  getDefaultModelId,
+  isKnownModelId,
 } from "./lib";
 import type { Message } from "./lib";
+import { useLocalStorageState } from "./hooks/useLocalStorageState";
 import {
   Mic,
   MicOff,
@@ -32,9 +36,35 @@ import {
   CardFooter,
 } from "@/components/ui/card";
 
+export const SELECTED_MODEL_ID_STORAGE_KEY = "webllm-chat-buddy:selected-model-id";
+
+/**
+ * Unloads an MLCEngine instance, converting any failure (a thrown error or
+ * a rejected promise) into a resolved promise so callers can await disposal
+ * without their own try/catch.
+ */
+async function unloadEngineSafely(engine: MLCEngine, context: string): Promise<void> {
+  try {
+    await engine.unload();
+  } catch (err) {
+    console.error(`Failed to unload ${context} engine:`, err);
+  }
+}
+
 export default function App() {
   const [webgpuSupported] = useState<boolean>(() => hasWebGPU());
   const [speechSupported] = useState<boolean>(() => hasSpeechRecognition());
+
+  const [storedModelId, setSelectedModelId] = useLocalStorageState<string>(
+    SELECTED_MODEL_ID_STORAGE_KEY,
+    getDefaultModelId
+  );
+  // localStorage is external data: validate it against the catalog before
+  // trusting it, falling back to the device-specific default for any
+  // unknown (e.g. removed or corrupted) id.
+  const selectedModelId = isKnownModelId(storedModelId)
+    ? storedModelId
+    : getDefaultModelId();
 
   const [engine, setEngine] = useState<MLCEngine | null>(null);
   const [isLoadingEngine, setIsLoadingEngine] = useState<boolean>(false);
@@ -50,7 +80,16 @@ export default function App() {
 
   const activeListenerRef = useRef<{ stop: () => void } | null>(null);
   const isManuallyEditedRef = useRef<boolean>(isManuallyEdited);
-  const isEngineInitializingRef = useRef<boolean>(false);
+  const engineRef = useRef<MLCEngine | null>(null);
+  // Dedupes consecutive effect runs requested for the same model id (guards
+  // against React.StrictMode's double-invocation of the same effect call).
+  const lastRequestedModelIdRef = useRef<string | null>(null);
+  // Ever-increasing generation number, bumped each time an init run actually
+  // starts. Async completion handlers below only apply their result if this
+  // is still the latest generation - identifying runs by model id alone
+  // cannot distinguish an A -> B -> A sequence's first and third runs, which
+  // share the same model id.
+  const initGenerationRef = useRef<number>(0);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
 
   // Keep isManuallyEditedRef in sync
@@ -63,40 +102,79 @@ export default function App() {
     messagesEndRef.current?.scrollIntoView?.({ behavior: "smooth" });
   }, [messages]);
 
-  // Initial capability check and engine loading (guarded against StrictMode double invocation)
+  // Keep engineRef in sync so the init effect can dispose of the previous
+  // engine without depending on `engine` directly (avoids stale closures).
+  useEffect(() => {
+    engineRef.current = engine;
+  }, [engine]);
+
+  // Engine loading, re-run whenever the selected model changes.
+  // Guarded against React.StrictMode double-invocation for the same model id.
   useEffect(() => {
     if (!webgpuSupported) {
       return;
     }
 
-    // Guard against React.StrictMode double-invocation
-    if (isEngineInitializingRef.current) {
+    if (lastRequestedModelIdRef.current === selectedModelId) {
       return;
     }
-    isEngineInitializingRef.current = true;
+    lastRequestedModelIdRef.current = selectedModelId;
 
+    // Snapshot the generation and model id this init run is for. Async
+    // completion handlers below must only apply their result if this is
+    // still the latest generation - otherwise a slow, superseded init
+    // could overwrite a newer selection.
+    const myGeneration = ++initGenerationRef.current;
+    const modelIdAtStart = selectedModelId;
+    const engineToDispose = engineRef.current;
+
+    setEngine(null);
     setIsLoadingEngine(true);
     setEngineError(null);
+    setProgressPercent(0);
+    setProgressText("");
 
-    initLLMEngine({
-      onProgress: (progress, text) => {
-        setProgressPercent(Math.round(progress * 100));
-        setProgressText(text);
-      },
-    })
-      .then((engineInstance) => {
-        setEngine(engineInstance);
-        setIsLoadingEngine(false);
+    const startInit = () => {
+      initLLMEngine({
+        modelId: modelIdAtStart,
+        onProgress: (progress, text) => {
+          if (initGenerationRef.current !== myGeneration) return;
+          setProgressPercent(Math.round(progress * 100));
+          setProgressText(text);
+        },
       })
-      .catch((err: unknown) => {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        setEngineError(
-          errorMessage ||
-            "モデルの読み込みに失敗しました。ページを再読み込みしてください。"
-        );
-        setIsLoadingEngine(false);
+        .then((engineInstance) => {
+          if (initGenerationRef.current !== myGeneration) {
+            // Superseded by a newer model selection: free the discarded
+            // engine's GPU resources instead of leaving them dangling.
+            unloadEngineSafely(engineInstance, "discarded");
+            return;
+          }
+          setEngine(engineInstance);
+          setIsLoadingEngine(false);
+        })
+        .catch((err: unknown) => {
+          if (initGenerationRef.current !== myGeneration) {
+            return;
+          }
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          const baseMessage = errorMessage || "モデルの読み込みに失敗しました。";
+          setEngineError(`${baseMessage} より軽いモデルを選んでください。`);
+          setIsLoadingEngine(false);
+        });
+    };
+
+    if (engineToDispose) {
+      // Wait for the previous engine to fully release its GPU resources
+      // before requesting the next one, so the two models never briefly
+      // coexist in memory (which would double peak VRAM usage).
+      unloadEngineSafely(engineToDispose, "previous").then(() => {
+        startInit();
       });
-  }, [webgpuSupported]);
+    } else {
+      startInit();
+    }
+  }, [webgpuSupported, selectedModelId]);
 
   const handleMicToggle = () => {
     if (!speechSupported || !engine || engineError) return;
@@ -176,12 +254,30 @@ export default function App() {
 
   return (
     <div className="flex flex-col min-h-screen bg-slate-50 p-4 sm:p-6 md:p-8 max-w-4xl mx-auto">
-      <header className="mb-6 flex items-center justify-between border-b pb-4">
+      <header className="mb-6 flex items-center justify-between border-b pb-4 gap-4">
         <div className="flex items-center gap-2">
           <Sparkles className="size-6 text-indigo-600" />
           <h1 className="text-xl font-bold tracking-tight text-slate-900">
             WebLLM Chat Buddy
           </h1>
+        </div>
+        <div className="flex items-center gap-2">
+          <label htmlFor="model-select" className="text-xs text-slate-500 shrink-0">
+            モデル
+          </label>
+          <select
+            id="model-select"
+            value={selectedModelId}
+            onChange={(e) => setSelectedModelId(e.target.value)}
+            disabled={!webgpuSupported}
+            className="text-sm border border-input rounded-md px-2 py-1 bg-transparent disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {MODEL_CATALOG.map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.label}（約{model.vramMB}MB）
+              </option>
+            ))}
+          </select>
         </div>
       </header>
 
