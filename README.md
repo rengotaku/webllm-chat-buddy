@@ -2,10 +2,13 @@
 
 ブラウザだけで完結するローカルLLMチャットアプリ。サーバーもAPI課金も無し。[WebLLM](https://github.com/mlc-ai/web-llm)がWebGPU経由でユーザーのGPU上に小型LLM(`Qwen2.5-1.5B-Instruct`、4bit量子化)を直接ロードして推論する。マイクからの音声入力([Web Speech API](https://developer.mozilla.org/docs/Web/API/Web_Speech_API))にも対応。
 
+**ローカル実行のみを想定している**（公開ホスティングはしていない）。`make run` で起動してブラウザで開く。
+
 ## 特徴
 
-- **サーバー不要**: 静的ホスティングだけで動く。LLMの推論はブラウザ内(WebGPU)で完結する
+- **サーバー不要**: LLMの推論はブラウザ内(WebGPU)で完結する。バックエンドは存在しない
 - **音声入力**: マイクボタンで音声認識→テキスト入力欄に反映
+- **モデル切替**: 用途・端末に応じて4種類から選択できる(下表)。選択はブラウザに保存される
 - **ブラウザ内モデルキャッシュ**: 初回のみモデルをダウンロード、以降はブラウザキャッシュから読み込む
 
 ## プライバシーについて
@@ -27,7 +30,33 @@ make install
 make run
 ```
 
-`http://localhost:5173` を開く。初回アクセス時にモデル(約1GB)のダウンロードが始まる。
+`http://localhost:5173` を開く。初回アクセス時にモデルのダウンロードが始まる（進捗バーが出る）。
+
+## モデルと初回ダウンロード量
+
+画面上部のプルダウンで選択する。数値は実測値（重みファイルの合計サイズ／WebLLM が要求する GPU メモリ）。
+
+| モデル | 初回ダウンロード | 要求GPUメモリ |
+|---|---|---|
+| Qwen2.5 0.5B | 約 265 MB | 945 MB |
+| Gemma3 1B | 約 537 MB | 711 MB |
+| Llama 3.2 1B | 約 663 MB | 879 MB |
+| Qwen2.5 1.5B（既定） | 約 828 MB | 1630 MB |
+
+ダウンロード量と要求GPUメモリは比例しない（Gemma3 1B はダウンロードが Llama 3.2 1B より小さいが、要求GPUメモリはさらに小さい）。回線が細いときはダウンロード量、GPU が非力なときは要求GPUメモリを見て選ぶ。
+
+モバイル環境（`navigator.userAgentData.mobile` または UA 文字列で判定）では既定が Qwen2.5 0.5B になる。
+
+### ダウンロードされる仕組み
+
+「インストール」ではなく、ページを開いた JavaScript が実行時に取得してブラウザのキャッシュへ保存する。OS にもブラウザにも何も常駐しない。
+
+1. wasm ランタイムを `raw.githubusercontent.com` から取得（推論エンジン本体）
+2. モデルの重みを `huggingface.co` から取得（30 個前後のファイルに分割されている）
+3. ブラウザのキャッシュ（Cache Storage の `webllm/model` / `webllm/wasm` / `webllm/config`）へ保存
+4. GPU へアップロードして会話可能になる
+
+2 回目以降はダウンロードが走らず、キャッシュから読み込む。消したい場合はブラウザの「サイトデータを削除」で消える。
 
 ## その他のコマンド
 
@@ -35,12 +64,6 @@ make run
 make help   # 利用可能なコマンド一覧
 make ci     # lint / test / build をまとめて実行
 ```
-
-## デプロイ
-
-- デプロイ先: [Cloudflare Pages](https://pages.cloudflare.com/)(Cloudflareダッシュボードの Git 連携で `main` ブランチを自動ビルド。ビルドコマンド `npm run build` / 出力ディレクトリ `dist`)
-- 公開URL: (デプロイ後に追記)
-- 設定ファイル: `wrangler.toml`(ビルド出力先)、`public/_redirects`(SPAフォールバック)、`public/_headers`(セキュリティヘッダ)
 
 ## 技術構成
 
