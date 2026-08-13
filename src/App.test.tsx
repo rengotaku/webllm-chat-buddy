@@ -12,6 +12,7 @@ import { MODEL_CATALOG, getDefaultModelId } from "./lib/modelCatalog";
 vi.mock("./lib/capabilities", () => ({
   hasWebGPU: vi.fn(),
   hasSpeechRecognition: vi.fn(),
+  hasShaderF16: vi.fn(),
 }));
 
 vi.mock("./lib/llmEngine", () => ({
@@ -39,6 +40,7 @@ describe("App", () => {
     localStorage.clear();
     vi.mocked(capabilities.hasWebGPU).mockReturnValue(true);
     vi.mocked(capabilities.hasSpeechRecognition).mockReturnValue(true);
+    vi.mocked(capabilities.hasShaderF16).mockResolvedValue(true);
     vi.mocked(llmEngine.initLLMEngine).mockResolvedValue(mockEngine);
   });
 
@@ -746,6 +748,65 @@ describe("App", () => {
       // UI should remain in the loading state (not silently "ready").
       expect(screen.queryByText(/モデルの読み込みエラー/)).not.toBeInTheDocument();
       expect(screen.getByRole("textbox")).toBeDisabled();
+    });
+  });
+
+  describe("Case F4-1: f16判定の完了前に保存済みf16モデルで初期化を開始しない", () => {
+    it("判定が未解決の間はinitLLMEngineが呼ばれず、falseで解決するとf32モデルで初期化される", async () => {
+      const f16ModelId = MODEL_CATALOG.find((m) => m.requiresF16)!.id;
+      localStorage.setItem(SELECTED_MODEL_ID_STORAGE_KEY, JSON.stringify(f16ModelId));
+
+      let resolveShaderF16: ((supported: boolean) => void) | undefined;
+      vi.mocked(capabilities.hasShaderF16).mockImplementation(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveShaderF16 = resolve;
+          })
+      );
+
+      render(<App />);
+
+      // (b) The shader-f16 probe is still unresolved: initLLMEngine must not
+      // have been called for the saved f16-required model (or anything else).
+      await waitFor(() => {
+        expect(resolveShaderF16).toBeDefined();
+      });
+      expect(llmEngine.initLLMEngine).not.toHaveBeenCalled();
+
+      // (c) Resolve the probe as unsupported.
+      await act(async () => {
+        resolveShaderF16?.(false);
+      });
+
+      await waitFor(() => {
+        expect(llmEngine.initLLMEngine).toHaveBeenCalled();
+      });
+
+      const calledModelId = vi.mocked(llmEngine.initLLMEngine).mock.calls[0][0]?.modelId;
+      const calledEntry = MODEL_CATALOG.find((m) => m.id === calledModelId);
+      expect(calledEntry?.requiresF16).toBe(false);
+    });
+  });
+
+  describe("Case F4-2: f16非対応環境で保存済みのf16モデルがf32へフォールバックされる", () => {
+    it("select の値が requiresF16 === false のモデルになる", async () => {
+      const f16ModelId = MODEL_CATALOG.find((m) => m.requiresF16)!.id;
+      localStorage.setItem(SELECTED_MODEL_ID_STORAGE_KEY, JSON.stringify(f16ModelId));
+
+      vi.mocked(capabilities.hasShaderF16).mockResolvedValue(false);
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(screen.getByRole("textbox")).not.toBeDisabled();
+      });
+
+      const select = screen.getByRole("combobox", {
+        name: "モデル",
+      }) as HTMLSelectElement;
+      const selectedEntry = MODEL_CATALOG.find((m) => m.id === select.value);
+      expect(selectedEntry).toBeDefined();
+      expect(selectedEntry!.requiresF16).toBe(false);
     });
   });
 });

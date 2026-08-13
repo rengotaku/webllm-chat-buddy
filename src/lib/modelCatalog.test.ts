@@ -6,6 +6,7 @@ import {
   DESKTOP_DEFAULT_MODEL_ID,
   getDefaultModelId,
   isKnownModelId,
+  getSelectableModels,
 } from "./modelCatalog";
 
 describe("modelCatalog", () => {
@@ -114,6 +115,61 @@ describe("modelCatalog", () => {
 
     it("カタログに存在しないIDに対して false を返す", () => {
       expect(isKnownModelId("nonexistent-model-id")).toBe(false);
+    });
+  });
+
+  describe("Case F2-1: 全モデルIDが prebuiltAppConfig に実在する", () => {
+    it("q4f32 追加後のカタログ全件が prebuiltAppConfig.model_list に存在する", () => {
+      const knownIds = new Set(prebuiltAppConfig.model_list.map((m) => m.model_id));
+
+      for (const entry of MODEL_CATALOG) {
+        expect(knownIds.has(entry.id)).toBe(true);
+      }
+    });
+  });
+
+  describe("Case F2-2: requiresF16 フラグがモデルIDの実態と一致する", () => {
+    it("id が q4f16 を含むエントリは requiresF16 === true、q4f32 を含むエントリは requiresF16 === false", () => {
+      for (const entry of MODEL_CATALOG) {
+        if (entry.id.includes("q4f16")) {
+          expect(entry.requiresF16).toBe(true);
+        }
+        if (entry.id.includes("q4f32")) {
+          expect(entry.requiresF16).toBe(false);
+        }
+      }
+    });
+  });
+
+  describe("Case F2-3: f16 非対応環境でも選べるモデルが最低1つある", () => {
+    it("requiresF16 === false のエントリが1件以上存在する", () => {
+      const nonF16Entries = MODEL_CATALOG.filter((entry) => !entry.requiresF16);
+      expect(nonF16Entries.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  describe("Case F3-1: f16 対応環境では全モデルが選択可能", () => {
+    it("getSelectableModels(true) は MODEL_CATALOG 全件を返す", () => {
+      expect(getSelectableModels(true)).toEqual(MODEL_CATALOG);
+    });
+  });
+
+  describe("Case F3-2: f16 非対応環境では f16 必須モデルが除外される", () => {
+    it("getSelectableModels(false) は requiresF16 === false のエントリのみを返す", () => {
+      const selectable = getSelectableModels(false);
+      expect(selectable.length).toBeGreaterThan(0);
+      for (const entry of selectable) {
+        expect(entry.requiresF16).toBe(false);
+      }
+    });
+  });
+
+  describe("Case F3-3: f16 非対応環境の既定モデルが f32 になる", () => {
+    it("f16 非対応を前提に既定モデルIDを求めると requiresF16 === false のモデルが返る", () => {
+      const defaultId = getDefaultModelId(false);
+      const entry = MODEL_CATALOG.find((m) => m.id === defaultId);
+      expect(entry).toBeDefined();
+      expect(entry!.requiresF16).toBe(false);
     });
   });
 });
