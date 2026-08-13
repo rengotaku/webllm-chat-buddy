@@ -83,6 +83,26 @@ describe("modelCatalog", () => {
     });
   });
 
+  // 追加テスト: downloadMB は選択UIに表示され、初回の待ち時間を決める値。
+  // 欠損・0 のまま追加されると「DL 0MB」と表示され、利用者が待ち時間を
+  // 見誤る（vramMB と違い、値が無くても型エラーにならず気づけない）。
+  describe("追加: ダウンロード量 (downloadMB) の妥当性", () => {
+    it("カタログの各エントリの downloadMB が 0 より大きい", () => {
+      for (const entry of MODEL_CATALOG) {
+        expect(entry.downloadMB).toBeGreaterThan(0);
+      }
+    });
+
+    // カタログの並び順は UI の選択肢順にそのまま反映される。
+    // 「初回の待ち時間が軽い順」という契約が崩れると、回線が細い利用者が
+    // 一覧の上から選んで最も重いモデルを掴む。並び順は型では守れない。
+    it("カタログが downloadMB の昇順に並んでいる", () => {
+      const sizes = MODEL_CATALOG.map((e) => e.downloadMB);
+      const sorted = [...sizes].sort((a, b) => a - b);
+      expect(sizes).toEqual(sorted);
+    });
+  });
+
   // 追加テスト: isKnownModelId は localStorage 由来のIDをカタログと照合する
   // ためのバリデータ本体。App.test.tsx の Case M4-4 は結合レベルでこの関数の
   // false 分岐（未知ID）を間接的に検証しているが、関数単体で true/false 双方の

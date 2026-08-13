@@ -298,9 +298,14 @@ export default function App() {
             disabled={!webgpuSupported}
             className="flex-1 min-w-0 text-sm border border-input rounded-md px-2 py-1 bg-transparent disabled:cursor-not-allowed disabled:opacity-50"
           >
+            {/*
+              ダウンロード量を先に出す。初回の待ち時間を決めるのはこちらで、
+              GPUメモリ量だけを出すと回線が細い利用者を誤導する
+              （Qwen2.5 0.5B は GPU 945MB だが DL は 265MB で最軽量）。
+            */}
             {MODEL_CATALOG.map((model) => (
               <option key={model.id} value={model.id}>
-                {model.label}（約{model.vramMB}MB）
+                {model.label}（DL {model.downloadMB}MB / GPU {model.vramMB}MB）
               </option>
             ))}
           </select>

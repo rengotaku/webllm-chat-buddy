@@ -1,6 +1,0 @@
-# Cloudflare Pages configuration.
-# Deploy via the Cloudflare dashboard's Git integration (see README "デプロイ").
-# https://developers.cloudflare.com/pages/configuration/wrangler-configuration/
-name = "webllm-chat-buddy"
-compatibility_date = "2026-08-13"
-pages_build_output_dir = "dist"
