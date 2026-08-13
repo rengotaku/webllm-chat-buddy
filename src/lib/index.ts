@@ -3,3 +3,4 @@ export * from "./chatReducer";
 export * from "./voiceInput";
 export * from "./llmEngine";
 export * from "./modelCatalog";
+export * from "./errorMessages";
