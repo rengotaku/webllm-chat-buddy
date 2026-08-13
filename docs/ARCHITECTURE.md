@@ -79,6 +79,14 @@
 - 代わりに **警告・エラーアラート側に `max-h-[20dvh] overflow-y-auto`** を設けて、長い WebGPU エラー文（英語・約 380 文字）が画面を占有しないようにしている
 - チャット履歴の下限は `min-h-12`（48px、1 行分）に留める
 
+### エンジン初期化失敗のエラー文言は `errorMessages.ts` が唯一の分類窓口
+
+`hasWebGPUAdapter()` の事前チェック（issue #18）を通過した後に起きるその他の失敗（メモリ不足・ネットワーク失敗・シェーダーコンパイル失敗等）は、`initLLMEngine().catch()` 内で `classifyEngineError()` に通してから `engineError` state（`EngineErrorInfo`）へ入れる（issue #13）。
+
+- **WebLLM の生の英語メッセージを直接 UI に出してはいけない。** 日本語の `headline` を先頭に、対処の `actions` を箇条書き、生メッセージ（`rawMessage`）は `<details>` で折りたたむ。逆順にすると issue #13 が解消しようとした「英語の生メッセージが句読点なく連結される」問題に戻る
+- **分類はキーワード正規表現ベースの推定であり確定診断ではない。** 新しいエラーパターンを追加するときは `MEMORY_PATTERN` / `NETWORK_PATTERN` を拡張するか、`unknown` のフォールバック文言に頼る。誤分類が起きても `rawMessage` は必ず保持されるため実害は小さい
+- **GPU アダプタ非対応（#18）の専用メッセージとは別経路。** アダプタ判定は `initLLMEngine()` を呼ぶ前の pre-check で完結しており、`classifyEngineError()` の対象にはならない
+
 ### 容量表示は 2 種類あり、混同してはいけない
 
 `modelCatalog.ts` の `downloadMB`（初回ダウンロード量）と `vramMB`（要求 GPU メモリ）は**比例しない**。
@@ -122,13 +130,4 @@ CI は `.github/workflows/ci.yml`。`make ci` に加えて `npm run format:check
 
 ## 既知の未整理事項
 
-scaffold（my-boilerplate の react-spa）由来の未使用コードが残っている。チャットアプリからは一切参照されていないが、テストとカバレッジには計上されている。
-
-| ディレクトリ | 規模 | 状態 |
-|---|---|---|
-| `src/pages/` | 9 ファイル / 821 行 | 未使用（ルーティングごと撤去済み） |
-| `src/api/` | 6 ファイル / 246 行 | 未使用（バックエンドが無い） |
-| `src/schemas/` | 3 ファイル / 32 行 | 未使用 |
-| `src/types/` | 3 ファイル / 28 行 | 未使用 |
-
-削除するとカバレッジの分母が変わるため、別 issue で扱う。
+なし（scaffold 由来の未使用コード `src/pages/` `src/api/` `src/schemas/` `src/types/` 等は #12 で削除済み）。
