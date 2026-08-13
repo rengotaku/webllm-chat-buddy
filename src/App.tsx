@@ -5,6 +5,7 @@ import {
   hasWebGPUAdapter,
   hasSpeechRecognition,
   hasShaderF16,
+  detectVulkanFlagBrowser,
   addMessage,
   appendToken,
   initLLMEngine,
@@ -16,7 +17,7 @@ import {
   isKnownModelId,
   getSelectableModels,
 } from "./lib";
-import type { Message } from "./lib";
+import type { Message, VulkanFlagBrowser } from "./lib";
 import { useLocalStorageState } from "./hooks/useLocalStorageState";
 import {
   Mic,
@@ -54,6 +55,23 @@ async function unloadEngineSafely(engine: MLCEngine, context: string): Promise<v
   }
 }
 
+/**
+ * GPUAdapter が取得できない環境向けの案内文言を、ブラウザ種別に応じて
+ * 出し分ける。Edge は `chrome://` スキームを解釈できないため、Chrome向け
+ * の手順をそのまま出すと利用者が対処できないまま詰まる（issue #18
+ * codexレビュー指摘）。
+ */
+function getVulkanFlagGuidance(browser: VulkanFlagBrowser): string {
+  switch (browser) {
+    case "chrome":
+      return "アドレスバーに chrome://flags/#enable-vulkan と入力し、「Vulkan」の項目をEnabledにしてブラウザを再起動してください。";
+    case "edge":
+      return "アドレスバーに edge://flags/#enable-vulkan と入力し、「Vulkan」の項目をEnabledにしてブラウザを再起動してください。";
+    case "other":
+      return "GPUドライバやOSのグラフィックス設定を確認するか、ChromeやEdgeなど他のブラウザでお試しください。";
+  }
+}
+
 export default function App() {
   const [webgpuSupported] = useState<boolean>(() => hasWebGPU());
   // null while the async GPUAdapter probe is still in flight - kept distinct
@@ -63,6 +81,12 @@ export default function App() {
   // (issue #18).
   const [webgpuAdapterSupported, setWebgpuAdapterSupported] = useState<boolean | null>(
     null
+  );
+  // Determines which flags-page scheme (chrome:// / edge://) the adapter
+  // unavailable notice below should mention. Computed once: it depends only
+  // on navigator.userAgent, which doesn't change during a session.
+  const [vulkanFlagBrowser] = useState<VulkanFlagBrowser>(() =>
+    detectVulkanFlagBrowser()
   );
   const [speechSupported] = useState<boolean>(() => hasSpeechRecognition());
   // null while the async shader-f16 adapter probe is still in flight - kept
@@ -418,8 +442,7 @@ export default function App() {
             </h3>
             <p className="text-sm text-amber-700 mt-1 break-words">
               このブラウザはWebGPUに対応していますが、GPUバックエンドが有効になっていません。
-              アドレスバーに chrome://flags/#enable-vulkan
-              と入力し、「Vulkan」の項目をEnabledにしてブラウザを再起動してください。
+              {getVulkanFlagGuidance(vulkanFlagBrowser)}
               モデルを軽いものに変更しても、この問題は解決しません。
             </p>
           </div>

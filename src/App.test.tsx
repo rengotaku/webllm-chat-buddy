@@ -1,7 +1,7 @@
 import React from "react";
 import { render, screen, waitFor, act } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { MLCEngine } from "@mlc-ai/web-llm";
 import App, { SELECTED_MODEL_ID_STORAGE_KEY } from "./App";
 import * as capabilities from "./lib/capabilities";
@@ -9,12 +9,20 @@ import * as llmEngine from "./lib/llmEngine";
 import * as voiceInput from "./lib/voiceInput";
 import { MODEL_CATALOG, getDefaultModelId } from "./lib/modelCatalog";
 
-vi.mock("./lib/capabilities", () => ({
-  hasWebGPU: vi.fn(),
-  hasWebGPUAdapter: vi.fn(),
-  hasSpeechRecognition: vi.fn(),
-  hasShaderF16: vi.fn(),
-}));
+// detectVulkanFlagBrowser は実装(vi.importActual)のまま残し、Case A3系で
+// navigator.userAgent を直接モックして検証できるようにする(他の4関数は
+// 従来どおり vi.fn() でモックする)。
+vi.mock("./lib/capabilities", async () => {
+  const actual =
+    await vi.importActual<typeof import("./lib/capabilities")>("./lib/capabilities");
+  return {
+    ...actual,
+    hasWebGPU: vi.fn(),
+    hasWebGPUAdapter: vi.fn(),
+    hasSpeechRecognition: vi.fn(),
+    hasShaderF16: vi.fn(),
+  };
+});
 
 vi.mock("./lib/llmEngine", () => ({
   initLLMEngine: vi.fn(),
@@ -36,9 +44,33 @@ describe("App", () => {
     unload: vi.fn().mockResolvedValue(undefined),
   } as unknown as MLCEngine;
 
+  const originalNavigator = globalThis.navigator;
+
+  afterEach(() => {
+    Object.defineProperty(globalThis, "navigator", {
+      value: originalNavigator,
+      writable: true,
+      configurable: true,
+    });
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     localStorage.clear();
+    // jsdom の既定 UA ("... jsdom/x.y.z") は Chrome/Edge のいずれの判定にも
+    // 一致しない。detectVulkanFlagBrowser() はモック対象外(実装のまま)の
+    // ため、UA を明示しないテストがテストランナーの内部実装文字列に
+    // 依存してしまう。典型的な Chrome 環境を既定値として与え、UA を
+    // 検証したい Case A3 系だけが個別に上書きする。
+    Object.defineProperty(globalThis, "navigator", {
+      value: {
+        ...originalNavigator,
+        userAgent:
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+      writable: true,
+      configurable: true,
+    });
     vi.mocked(capabilities.hasWebGPU).mockReturnValue(true);
     vi.mocked(capabilities.hasWebGPUAdapter).mockResolvedValue(true);
     vi.mocked(capabilities.hasSpeechRecognition).mockReturnValue(true);
@@ -894,6 +926,163 @@ describe("App", () => {
       expect(llmEngine.initLLMEngine).not.toHaveBeenCalled();
       await waitFor(() => {
         expect(screen.getByText(/chrome:\/\/flags\/#enable-vulkan/)).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe("Case A3-1: Chromeではchrome://flagsを案内する", () => {
+    it("Edg/を含まないChromeのUAのとき案内にchrome://flags/#enable-vulkanが含まれる", async () => {
+      Object.defineProperty(globalThis, "navigator", {
+        value: {
+          ...originalNavigator,
+          userAgent:
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        },
+        writable: true,
+        configurable: true,
+      });
+      vi.mocked(capabilities.hasWebGPU).mockReturnValue(true);
+      vi.mocked(capabilities.hasWebGPUAdapter).mockResolvedValue(false);
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/chrome:\/\/flags\/#enable-vulkan/)).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe("Case A3-2: Edgeではedge://flagsを案内する", () => {
+    it("Chrome/とEdg/の両方を含むEdgeのUAのとき案内にedge://flags/#enable-vulkanが含まれ、chrome://flagsは含まれない", async () => {
+      // 実際の Edge(Chromium版)の UA は Chrome/ を含む。Edg/ の判定を
+      // 先に行わないと Chrome と誤判定される(issue #18 codexレビュー指摘)。
+      Object.defineProperty(globalThis, "navigator", {
+        value: {
+          ...originalNavigator,
+          userAgent:
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+        },
+        writable: true,
+        configurable: true,
+      });
+      vi.mocked(capabilities.hasWebGPU).mockReturnValue(true);
+      vi.mocked(capabilities.hasWebGPUAdapter).mockResolvedValue(false);
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/edge:\/\/flags\/#enable-vulkan/)).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/chrome:\/\/flags/)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Case A3-3: それ以外のブラウザでは汎用案内にする", () => {
+    it("FirefoxのUAのとき案内にchrome://もedge://も含まれない", async () => {
+      Object.defineProperty(globalThis, "navigator", {
+        value: {
+          ...originalNavigator,
+          userAgent:
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
+        },
+        writable: true,
+        configurable: true,
+      });
+      vi.mocked(capabilities.hasWebGPU).mockReturnValue(true);
+      vi.mocked(capabilities.hasWebGPUAdapter).mockResolvedValue(false);
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/GPU バックエンドが無効です/)).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/chrome:\/\//)).not.toBeInTheDocument();
+      expect(screen.queryByText(/edge:\/\//)).not.toBeInTheDocument();
+    });
+
+    it("SafariのUAのとき案内にchrome://もedge://も含まれない", async () => {
+      Object.defineProperty(globalThis, "navigator", {
+        value: {
+          ...originalNavigator,
+          userAgent:
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+        },
+        writable: true,
+        configurable: true,
+      });
+      vi.mocked(capabilities.hasWebGPU).mockReturnValue(true);
+      vi.mocked(capabilities.hasWebGPUAdapter).mockResolvedValue(false);
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/GPU バックエンドが無効です/)).toBeInTheDocument();
+      });
+      expect(screen.queryByText(/chrome:\/\//)).not.toBeInTheDocument();
+      expect(screen.queryByText(/edge:\/\//)).not.toBeInTheDocument();
+    });
+  });
+
+  describe("Case A3-4: どのブラウザでも「軽いモデルでは解決しない」旨を表示する", () => {
+    const commonNoticeRegExp = /モデルを軽いものに変更しても、この問題は解決しません。/;
+
+    it("Chromeの案内にも軽いモデルでは解決しない旨が含まれる", async () => {
+      Object.defineProperty(globalThis, "navigator", {
+        value: {
+          ...originalNavigator,
+          userAgent:
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        },
+        writable: true,
+        configurable: true,
+      });
+      vi.mocked(capabilities.hasWebGPU).mockReturnValue(true);
+      vi.mocked(capabilities.hasWebGPUAdapter).mockResolvedValue(false);
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(screen.getByText(commonNoticeRegExp)).toBeInTheDocument();
+      });
+    });
+
+    it("Edgeの案内にも軽いモデルでは解決しない旨が含まれる", async () => {
+      Object.defineProperty(globalThis, "navigator", {
+        value: {
+          ...originalNavigator,
+          userAgent:
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+        },
+        writable: true,
+        configurable: true,
+      });
+      vi.mocked(capabilities.hasWebGPU).mockReturnValue(true);
+      vi.mocked(capabilities.hasWebGPUAdapter).mockResolvedValue(false);
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(screen.getByText(commonNoticeRegExp)).toBeInTheDocument();
+      });
+    });
+
+    it("それ以外のブラウザの案内にも軽いモデルでは解決しない旨が含まれる", async () => {
+      Object.defineProperty(globalThis, "navigator", {
+        value: {
+          ...originalNavigator,
+          userAgent:
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:120.0) Gecko/20100101 Firefox/120.0",
+        },
+        writable: true,
+        configurable: true,
+      });
+      vi.mocked(capabilities.hasWebGPU).mockReturnValue(true);
+      vi.mocked(capabilities.hasWebGPUAdapter).mockResolvedValue(false);
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(screen.getByText(commonNoticeRegExp)).toBeInTheDocument();
       });
     });
   });

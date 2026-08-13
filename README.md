@@ -25,7 +25,7 @@
 - WebGPU対応ブラウザ(Chrome / Edge 推奨。`chrome://gpu` でWebGPUが有効か確認できる)
 - マイク入力を使う場合はWeb Speech API対応ブラウザ(Chrome系)
 - Android: Android 12 以降 + Chrome 121 以降(WebGPU対応の最小要件)
-- **Linux の Chrome**: 既定ではGPUバックエンド(Vulkan)が無効になっており、ブラウザ自体はWebGPUに対応していてもGPUアダプタを取得できないことがある。その場合は `chrome://flags/#enable-vulkan` を Enabled にしてブラウザを再起動する(この状態ではモデルを軽いものに変更しても解決しない)
+- **Linux の Chrome / Edge**: 既定ではGPUバックエンド(Vulkan)が無効になっており、ブラウザ自体はWebGPUに対応していてもGPUアダプタを取得できないことがある。その場合、Chromeでは `chrome://flags/#enable-vulkan`、Edgeでは `edge://flags/#enable-vulkan` を Enabled にしてブラウザを再起動する(この状態ではモデルを軽いものに変更しても解決しない)。それ以外のブラウザではGPUドライバやOSのグラフィックス設定を確認する
 - 非対応ブラウザ、およびGPUアダプタを取得できない場合はその旨のメッセージが表示され、チャット機能は無効化される
 
 スマートフォン幅にも対応している。
@@ -63,7 +63,7 @@ make run
 
 4bit 量子化には `q4f16` と `q4f32` の2種類があり、**`q4f16` は WebGPU の `shader-f16` 機能を必須とする**。この機能が使えない環境では、モデルのダウンロードが最後まで進んだあとにシェーダーのコンパイルで失敗する。
 
-Linux 版 Chrome は**既定で Vulkan バックエンドが無効**なため、フラグ無しでは WebGPU の GPUAdapter 自体を取得できない（`navigator.gpu` は存在していても `requestAdapter()` が `null` を返す）。`chrome://flags/#enable-vulkan` を Enabled にしてブラウザを再起動すると、実GPUのアダプタを取得できるようになる。ただし、その状態でも `shader-f16` が使えない場合があり（GPUドライバの構成に依存）、そのときは `shader-f16` 不要な f32 モデルへ自動でフォールバックする。
+Linux 版 Chrome / Edge は**既定で Vulkan バックエンドが無効**なため、フラグ無しでは WebGPU の GPUAdapter 自体を取得できない（`navigator.gpu` は存在していても `requestAdapter()` が `null` を返す）。Chromeでは `chrome://flags/#enable-vulkan`、Edgeでは `edge://flags/#enable-vulkan` を Enabled にしてブラウザを再起動すると、実GPUのアダプタを取得できるようになる。ただし、その状態でも `shader-f16` が使えない場合があり（GPUドライバの構成に依存）、そのときは `shader-f16` 不要な f32 モデルへ自動でフォールバックする。
 
 起動時に自動判定し、**使えない環境では `shader-f16` 不要のモデルだけを選択肢に出す**（保存済みの選択が f16 必須モデルだった場合も自動でフォールバックする）。判定中はモデル選択が一時的に操作不可になる。
 

@@ -93,6 +93,35 @@ export async function hasWebGPUAdapter(): Promise<boolean> {
   }
 }
 
+export type VulkanFlagBrowser = "chrome" | "edge" | "other";
+
+/**
+ * GPUAdapter が取得できない環境向けの案内（`chrome://flags/#enable-vulkan`
+ * 等）をどのブラウザ向けの文言で出すかを `navigator.userAgent` から判定
+ * する。
+ *
+ * 🔴 Edge の UA は `Chrome/` も含む（例:
+ * `... Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0`）ため、`Edg/` の
+ * 判定を先に行うこと。順序を逆にすると Edge を Chrome と誤判定し、Edge
+ * では使えない `chrome://` スキームを案内してしまう（issue #18
+ * codexレビュー指摘: 誤誘導を直す修正が別の誤誘導を生んでいた）。
+ */
+export function detectVulkanFlagBrowser(): VulkanFlagBrowser {
+  if (typeof navigator === "undefined" || !navigator.userAgent) {
+    return "other";
+  }
+
+  const ua = navigator.userAgent;
+
+  if (ua.includes("Edg/")) {
+    return "edge";
+  }
+  if (ua.includes("Chrome/")) {
+    return "chrome";
+  }
+  return "other";
+}
+
 export function hasSpeechRecognition(): boolean {
   if (typeof window === "undefined") {
     return false;
