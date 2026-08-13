@@ -16,8 +16,9 @@ import {
   getDefaultModelId,
   isKnownModelId,
   getSelectableModels,
+  classifyEngineError,
 } from "./lib";
-import type { Message, VulkanFlagBrowser } from "./lib";
+import type { Message, VulkanFlagBrowser, EngineErrorInfo } from "./lib";
 import { useLocalStorageState } from "./hooks/useLocalStorageState";
 import {
   Mic,
@@ -119,7 +120,7 @@ export default function App() {
   const [isLoadingEngine, setIsLoadingEngine] = useState<boolean>(false);
   const [progressPercent, setProgressPercent] = useState<number>(0);
   const [progressText, setProgressText] = useState<string>("");
-  const [engineError, setEngineError] = useState<string | null>(null);
+  const [engineError, setEngineError] = useState<EngineErrorInfo | null>(null);
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState<string>("");
@@ -264,9 +265,7 @@ export default function App() {
           if (initGenerationRef.current !== myGeneration) {
             return;
           }
-          const errorMessage = err instanceof Error ? err.message : String(err);
-          const baseMessage = errorMessage || "モデルの読み込みに失敗しました。";
-          setEngineError(`${baseMessage} より軽いモデルを選んでください。`);
+          setEngineError(classifyEngineError(err));
           setIsLoadingEngine(false);
         });
     };
@@ -479,10 +478,20 @@ export default function App() {
         <div className="mb-4 sm:mb-6 shrink-0 max-h-[20dvh] overflow-y-auto rounded-lg bg-red-50 p-4 border border-red-200 flex items-start gap-3">
           <XCircle className="size-5 text-red-600 shrink-0 mt-0.5" />
           <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-red-800">モデルの読み込みエラー</h3>
-            <p className="text-sm text-red-700 mt-1 break-words">
-              {engineError} ページを再読み込みしてください。
-            </p>
+            <h3 className="text-sm font-semibold text-red-800">{engineError.headline}</h3>
+            <ul className="text-sm text-red-700 mt-1 list-disc pl-5 space-y-0.5">
+              {engineError.actions.map((action) => (
+                <li key={action} className="break-words">
+                  {action}
+                </li>
+              ))}
+            </ul>
+            {engineError.rawMessage && (
+              <details className="mt-2 text-xs text-red-600">
+                <summary className="cursor-pointer">詳細情報</summary>
+                <p className="mt-1 break-words">{engineError.rawMessage}</p>
+              </details>
+            )}
           </div>
         </div>
       )}

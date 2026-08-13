@@ -113,17 +113,35 @@ describe("App", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByText(
-          "GPU memory exhausted より軽いモデルを選んでください。 ページを再読み込みしてください。"
-        )
+        screen.getByText("GPUメモリが不足している可能性があります。")
       ).toBeInTheDocument();
     });
+
+    expect(screen.getByText("より軽いモデルを選んでください。")).toBeInTheDocument();
+
+    const details = screen.getByText("詳細情報").closest("details");
+    expect(details).not.toBeNull();
+    expect(details).toHaveTextContent("GPU memory exhausted");
 
     const input = screen.getByRole("textbox");
     expect(input).toBeDisabled();
 
     const sendButton = screen.getByRole("button", { name: "" });
     expect(sendButton).toBeDisabled();
+  });
+
+  it("ネットワーク系エラーで初期化が失敗した場合に専用の日本語見出しが表示されること", async () => {
+    vi.mocked(llmEngine.initLLMEngine).mockRejectedValue(
+      new Error("Failed to fetch model weights from CDN")
+    );
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("モデルのダウンロードに失敗しました。")
+      ).toBeInTheDocument();
+    });
   });
 
   it("メッセージ送信によりストリーミングでアシスタント応答が逐次表示されること", async () => {
@@ -235,12 +253,10 @@ describe("App", () => {
     render(<App />);
 
     await waitFor(() => {
-      expect(
-        screen.getByText(
-          "モデルの読み込みに失敗しました。 より軽いモデルを選んでください。 ページを再読み込みしてください。"
-        )
-      ).toBeInTheDocument();
+      expect(screen.getByText("モデルの読み込みに失敗しました。")).toBeInTheDocument();
     });
+
+    expect(screen.queryByText("詳細情報")).not.toBeInTheDocument();
   });
 
   it("音声認識中にメッセージを送信すると音声認識が自動停止すること", async () => {
