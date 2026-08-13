@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { MLCEngine } from "@mlc-ai/web-llm";
 import {
   hasWebGPU,
+  hasWebGPUAdapter,
   hasSpeechRecognition,
   hasShaderF16,
   addMessage,
@@ -55,6 +56,14 @@ async function unloadEngineSafely(engine: MLCEngine, context: string): Promise<v
 
 export default function App() {
   const [webgpuSupported] = useState<boolean>(() => hasWebGPU());
+  // null while the async GPUAdapter probe is still in flight - kept distinct
+  // from `false` (checked, and confirmed absent). navigator.gpu can exist
+  // while requestAdapter() still returns null (Linux Chrome disables the
+  // Vulkan backend by default), so hasWebGPU() alone cannot detect this
+  // (issue #18).
+  const [webgpuAdapterSupported, setWebgpuAdapterSupported] = useState<boolean | null>(
+    null
+  );
   const [speechSupported] = useState<boolean>(() => hasSpeechRecognition());
   // null while the async shader-f16 adapter probe is still in flight - kept
   // distinct from `false` (checked, and confirmed absent).
@@ -130,6 +139,24 @@ export default function App() {
     engineRef.current = engine;
   }, [engine]);
 
+  // Probe GPUAdapter availability once per mount. navigator.gpu existing
+  // does not mean requestAdapter() can produce a usable adapter (Linux
+  // Chrome disables the Vulkan backend by default - issue #18); the
+  // engine-loading effect below treats an unresolved or negative probe as
+  // one more "not ready to start" precondition so it never attempts to
+  // download a model that is guaranteed to fail to initialize.
+  useEffect(() => {
+    let cancelled = false;
+    hasWebGPUAdapter().then((supported) => {
+      if (!cancelled) {
+        setWebgpuAdapterSupported(supported);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Probe shader-f16 support once per mount. Async because it requires
   // requesting a GPUAdapter; the engine-loading effect below treats an
   // unresolved probe as one more "not ready to start" precondition so it
@@ -151,6 +178,15 @@ export default function App() {
   // Guarded against React.StrictMode double-invocation for the same model id.
   useEffect(() => {
     if (!webgpuSupported) {
+      return;
+    }
+
+    if (webgpuAdapterSupported !== true) {
+      // Adapter probe hasn't resolved yet (null), or resolved to false: in
+      // both cases a model load must not be attempted. A false result means
+      // requestAdapter() cannot produce a usable adapter, so every load
+      // would fail after downloading (issue #18) - that state is surfaced
+      // as a dedicated notice in the render below instead.
       return;
     }
 
@@ -241,7 +277,7 @@ export default function App() {
     } else {
       startInitIfCurrent();
     }
-  }, [webgpuSupported, shaderF16Supported, selectedModelId]);
+  }, [webgpuSupported, webgpuAdapterSupported, shaderF16Supported, selectedModelId]);
 
   const handleMicToggle = () => {
     if (!speechSupported || !engine || engineError) return;
@@ -372,6 +408,24 @@ export default function App() {
         </div>
       )}
 
+      {/* WebGPU Adapter Unavailable Warning */}
+      {webgpuSupported && webgpuAdapterSupported === false && (
+        <div className="mb-4 sm:mb-6 shrink-0 max-h-[20dvh] overflow-y-auto rounded-lg bg-amber-50 p-4 border border-amber-200 flex items-start gap-3">
+          <AlertTriangle className="size-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-amber-800">
+              GPU バックエンドが無効です
+            </h3>
+            <p className="text-sm text-amber-700 mt-1 break-words">
+              このブラウザはWebGPUに対応していますが、GPUバックエンドが有効になっていません。
+              アドレスバーに chrome://flags/#enable-vulkan
+              と入力し、「Vulkan」の項目をEnabledにしてブラウザを再起動してください。
+              モデルを軽いものに変更しても、この問題は解決しません。
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Engine Loading Progress */}
       {webgpuSupported && isLoadingEngine && (
         <Card className="mb-4 sm:mb-6 shrink-0">
@@ -424,11 +478,13 @@ export default function App() {
               <p className="text-sm">
                 {!webgpuSupported
                   ? "WebGPU非対応ブラウザのため機能は利用できません。"
-                  : engineError
-                    ? "モデルの初期化に失敗しました。ページをリロードしてください。"
-                    : isLoadingEngine
-                      ? "モデルのロードを待機中..."
-                      : "メッセージを入力するか、マイクボタンで話しかけてください。"}
+                  : webgpuAdapterSupported === false
+                    ? "GPUバックエンドが無効なため機能は利用できません。"
+                    : engineError
+                      ? "モデルの初期化に失敗しました。ページをリロードしてください。"
+                      : isLoadingEngine
+                        ? "モデルのロードを待機中..."
+                        : "メッセージを入力するか、マイクボタンで話しかけてください。"}
               </p>
             </div>
           ) : (
@@ -481,13 +537,15 @@ export default function App() {
                 title={
                   !webgpuSupported
                     ? "WebGPU非対応のため利用できません"
-                    : !speechSupported
-                      ? "このブラウザは音声認識機能(Speech Recognition API)に対応していません"
-                      : engineError
-                        ? "モデルの初期化に失敗しているため利用できません"
-                        : isListening
-                          ? "音声認識を停止"
-                          : "音声認識を開始"
+                    : webgpuAdapterSupported === false
+                      ? "GPUバックエンドが無効なため利用できません"
+                      : !speechSupported
+                        ? "このブラウザは音声認識機能(Speech Recognition API)に対応していません"
+                        : engineError
+                          ? "モデルの初期化に失敗しているため利用できません"
+                          : isListening
+                            ? "音声認識を停止"
+                            : "音声認識を開始"
                 }
               >
                 {isListening ? (
@@ -508,11 +566,13 @@ export default function App() {
               placeholder={
                 !webgpuSupported
                   ? "WebGPU非対応のため入力できません"
-                  : engineError
-                    ? "モデルの読み込みに失敗しました。ページを再読み込みしてください"
-                    : !speechSupported
-                      ? "メッセージを入力... (音声非対応)"
-                      : "メッセージを入力、またはマイクで音声入力..."
+                  : webgpuAdapterSupported === false
+                    ? "GPUバックエンドが無効なため入力できません"
+                    : engineError
+                      ? "モデルの読み込みに失敗しました。ページを再読み込みしてください"
+                      : !speechSupported
+                        ? "メッセージを入力... (音声非対応)"
+                        : "メッセージを入力、またはマイクで音声入力..."
               }
               disabled={!webgpuSupported || !isEngineReady || isGenerating}
               className="flex-1 min-w-0 h-11"

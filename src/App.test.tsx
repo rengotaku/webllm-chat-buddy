@@ -11,6 +11,7 @@ import { MODEL_CATALOG, getDefaultModelId } from "./lib/modelCatalog";
 
 vi.mock("./lib/capabilities", () => ({
   hasWebGPU: vi.fn(),
+  hasWebGPUAdapter: vi.fn(),
   hasSpeechRecognition: vi.fn(),
   hasShaderF16: vi.fn(),
 }));
@@ -39,6 +40,7 @@ describe("App", () => {
     vi.clearAllMocks();
     localStorage.clear();
     vi.mocked(capabilities.hasWebGPU).mockReturnValue(true);
+    vi.mocked(capabilities.hasWebGPUAdapter).mockResolvedValue(true);
     vi.mocked(capabilities.hasSpeechRecognition).mockReturnValue(true);
     vi.mocked(capabilities.hasShaderF16).mockResolvedValue(true);
     vi.mocked(llmEngine.initLLMEngine).mockResolvedValue(mockEngine);
@@ -807,6 +809,92 @@ describe("App", () => {
       const selectedEntry = MODEL_CATALOG.find((m) => m.id === select.value);
       expect(selectedEntry).toBeDefined();
       expect(selectedEntry!.requiresF16).toBe(false);
+    });
+  });
+
+  describe("Case A2-1: WebGPU 自体が非対応の場合は従来どおりの案内が出る", () => {
+    it("hasWebGPUAdapterの結果に関わらずWebGPU非対応の案内が表示されチャット機能が無効化される", () => {
+      vi.mocked(capabilities.hasWebGPU).mockReturnValue(false);
+
+      render(<App />);
+
+      expect(
+        screen.getByText(
+          "このブラウザはWebGPUに対応していません。WebGPU対応のブラウザ（Chrome, Edge, Safari Preview等）をご利用ください。"
+        )
+      ).toBeInTheDocument();
+
+      const input = screen.getByRole("textbox");
+      expect(input).toBeDisabled();
+      expect(llmEngine.initLLMEngine).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Case A2-2: WebGPU対応だがアダプタが取得できない場合", () => {
+    it("chrome://flags/#enable-vulkanを含む案内が表示され、initLLMEngineが呼ばれず入力欄が無効化される", async () => {
+      vi.mocked(capabilities.hasWebGPU).mockReturnValue(true);
+      vi.mocked(capabilities.hasWebGPUAdapter).mockResolvedValue(false);
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(screen.getByText(/chrome:\/\/flags\/#enable-vulkan/)).toBeInTheDocument();
+      });
+
+      // モデルのロードを一切試みていないこと(症状: 英語の生エラーで
+      // 失敗する前に、ここで止める)。
+      expect(llmEngine.initLLMEngine).not.toHaveBeenCalled();
+
+      const input = screen.getByRole("textbox");
+      expect(input).toBeDisabled();
+    });
+  });
+
+  describe("Case A2-3: アダプタが取得できる場合は従来どおり初期化する", () => {
+    it("hasWebGPUとhasWebGPUAdapterがともにtrueならinitLLMEngineが呼ばれる", async () => {
+      vi.mocked(capabilities.hasWebGPU).mockReturnValue(true);
+      vi.mocked(capabilities.hasWebGPUAdapter).mockResolvedValue(true);
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(llmEngine.initLLMEngine).toHaveBeenCalled();
+      });
+
+      await waitFor(() => {
+        expect(screen.getByRole("textbox")).not.toBeDisabled();
+      });
+    });
+  });
+
+  describe("Case A2-4: 判定の完了前に初期化を開始しない", () => {
+    it("hasWebGPUAdapterが未解決の間はinitLLMEngineが呼ばれず、falseで解決しても呼ばれないままになる", async () => {
+      let resolveAdapter: ((supported: boolean) => void) | undefined;
+      vi.mocked(capabilities.hasWebGPUAdapter).mockImplementation(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveAdapter = resolve;
+          })
+      );
+
+      render(<App />);
+
+      await waitFor(() => {
+        expect(resolveAdapter).toBeDefined();
+      });
+
+      // 判定が未解決の間はロードを試みない。
+      expect(llmEngine.initLLMEngine).not.toHaveBeenCalled();
+
+      await act(async () => {
+        resolveAdapter?.(false);
+      });
+
+      // false で解決した後もロードは試みない(A2-2 と同じ状態になる)。
+      expect(llmEngine.initLLMEngine).not.toHaveBeenCalled();
+      await waitFor(() => {
+        expect(screen.getByText(/chrome:\/\/flags\/#enable-vulkan/)).toBeInTheDocument();
+      });
     });
   });
 });

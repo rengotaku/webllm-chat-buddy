@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import {
   hasWebGPU,
+  hasWebGPUAdapter,
   hasSpeechRecognition,
   hasShaderF16,
   resetShaderF16Cache,
@@ -155,6 +156,78 @@ describe("capabilities", () => {
         });
 
         await expect(hasShaderF16()).resolves.toBe(false);
+      });
+    });
+  });
+
+  describe("Case A1: WebGPU アダプタ取得可否の判定", () => {
+    describe("Case A1-1: アダプタが取得できる場合", () => {
+      it("returns true when requestAdapter resolves to an adapter", async () => {
+        Object.defineProperty(globalThis, "navigator", {
+          value: {
+            ...originalNavigator,
+            gpu: {
+              requestAdapter: vi.fn().mockResolvedValue({
+                features: new Set(["shader-f16"]),
+              }),
+            },
+          },
+          writable: true,
+          configurable: true,
+        });
+
+        await expect(hasWebGPUAdapter()).resolves.toBe(true);
+      });
+    });
+
+    describe("Case A1-2: アダプタが null の場合", () => {
+      it("returns false when requestAdapter resolves to null", async () => {
+        // issue #18 の症状そのもの: navigator.gpu があっても
+        // requestAdapter() が null を返す環境では WebGPU は実際には
+        // 使えない。navigator.gpu の有無だけでは判定できない。
+        Object.defineProperty(globalThis, "navigator", {
+          value: {
+            ...originalNavigator,
+            gpu: {
+              requestAdapter: vi.fn().mockResolvedValue(null),
+            },
+          },
+          writable: true,
+          configurable: true,
+        });
+
+        await expect(hasWebGPUAdapter()).resolves.toBe(false);
+      });
+    });
+
+    describe("Case A1-3: navigator.gpu が無い場合", () => {
+      it("returns false without throwing when navigator.gpu is undefined", async () => {
+        Object.defineProperty(globalThis, "navigator", {
+          value: { ...originalNavigator, gpu: undefined },
+          writable: true,
+          configurable: true,
+        });
+
+        await expect(hasWebGPUAdapter()).resolves.toBe(false);
+      });
+    });
+
+    describe("Case A1-4: requestAdapter() が reject する場合", () => {
+      it("returns false without propagating the rejection", async () => {
+        Object.defineProperty(globalThis, "navigator", {
+          value: {
+            ...originalNavigator,
+            gpu: {
+              requestAdapter: vi
+                .fn()
+                .mockRejectedValue(new Error("adapter request failed")),
+            },
+          },
+          writable: true,
+          configurable: true,
+        });
+
+        await expect(hasWebGPUAdapter()).resolves.toBe(false);
       });
     });
   });
