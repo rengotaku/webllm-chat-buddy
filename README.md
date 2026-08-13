@@ -63,6 +63,29 @@ make open   # 専用インスタンスで開く
 
 **自動検出が絶対パスを優先する理由**: PATH上の `google-chrome` 等は、GPUを使う他ジョブとのVRAM競合を避けるために既定で `--disable-gpu` を注入するラッパースクリプトに差し替えられていることがある。ラッパー経由で起動すると `--enable-features=Vulkan` を渡してもGPUが無効化されたまま起動してしまうため、`make open` は実体バイナリの絶対パス(`/opt/google/chrome/chrome` など)を優先する。それでも意図しない実行ファイルが選ばれる場合は `WEBLLM_CHROME_BIN=/path/to/chrome make open` で使用する実行ファイルを明示指定できる。
 
+### LAN上の別端末で試す(スマートフォン等)
+
+同一LAN上のスマートフォンなど別端末からこのアプリを開くには、**HTTPS化が必須**。`vite --host 0.0.0.0` で公開しただけの平文HTTPでは動かない。
+
+| アクセス経路 | `isSecureContext` | `navigator.gpu` |
+|---|---|---|
+| `http://localhost:5173/` | true | 存在する |
+| `http://192.168.x.x:5173/`(平文HTTP) | **false** | **存在しない** |
+
+ブラウザは `localhost` 以外への平文HTTPを secure context と見なさないため、WebGPU API (`navigator.gpu`) 自体が露出しない。端末のGPU性能とは無関係で、HTTPS化すれば解決する。
+
+```bash
+make run-https
+```
+
+起動時にLAN上の他端末から接続するためのURL(`https://<LAN IP>:5173/`)が表示される。証明書は初回起動時に `openssl` でその場で自己署名生成し、リポジトリ外(既定 `~/.cache/webllm-chat-buddy/certs`。`WEBLLM_CERT_DIR` で変更可)に保存する。2回目以降は既存証明書を再利用する(別ネットワークへ移動してLAN IPが変わった場合は自動的に再生成される)。
+
+**注意点**:
+
+- **自己署名証明書のため、接続のたびにブラウザで証明書警告が出て、手動で許可する必要がある**(信頼された認証局の署名ではないため)。常用したくなった場合は Tailscale serve 等への移行を検討する(本リポジトリの対象外)
+- スマートフォン側にもWebGPUの要件がある: **Android 12以降 + Chrome 121以降**。iOSは**Safari 26以降**が必要(端末がこれらの要件を満たすかは別途確認が必要。要件を満たしていてもGPUドライバや `shader-f16` 対応の有無で動作しないことがある)
+- `make open`(専用Chromeプロファイルでの起動)は**このHTTPSモードには対応していない**。`open-browser.sh` は `http://localhost:${PORT}` 固定で、`make run`(平文HTTP)と組み合わせて使う想定。前述の表のとおり `localhost` は平文HTTPでもsecure contextとして扱われるため、同一マシン上でのGPUアダプタ確認には `make run` + `make open` を使う。`make run-https` はLAN上の**別端末**からアクセスする用途にのみ使う
+
 ## モデルと初回ダウンロード量
 
 画面上部のプルダウンで選択する。数値は実測値（重みファイルの合計サイズ／WebLLM が要求する GPU メモリ）。
