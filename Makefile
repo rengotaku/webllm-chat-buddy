@@ -1,4 +1,4 @@
-.PHONY: install compose-ui run build preview stop status lint lint-fix format format-check \
+.PHONY: install compose-ui run build preview stop status open lint lint-fix format format-check \
 	test test-watch test-cov check ci clean help
 
 # Default target
@@ -44,6 +44,10 @@ stop:
 ## status: Check if the dev server is running
 status:
 	@lsof -i :$(PORT) >/dev/null 2>&1 && echo "webllm-chat-buddy: running (:$(PORT))" || echo "webllm-chat-buddy: stopped"
+
+## open: Open the app in a dedicated Chrome/Chromium instance (isolated profile, Vulkan enabled; requires `make run` first)
+open:
+	@PORT=$(PORT) scripts/open-browser.sh
 
 ## lint: Run linter
 lint:
