@@ -3,6 +3,7 @@ import { MLCEngine } from "@mlc-ai/web-llm";
 import {
   hasWebGPU,
   hasSpeechRecognition,
+  hasShaderF16,
   addMessage,
   appendToken,
   initLLMEngine,
@@ -12,6 +13,7 @@ import {
   MODEL_CATALOG,
   getDefaultModelId,
   isKnownModelId,
+  getSelectableModels,
 } from "./lib";
 import type { Message } from "./lib";
 import { useLocalStorageState } from "./hooks/useLocalStorageState";
@@ -54,6 +56,9 @@ async function unloadEngineSafely(engine: MLCEngine, context: string): Promise<v
 export default function App() {
   const [webgpuSupported] = useState<boolean>(() => hasWebGPU());
   const [speechSupported] = useState<boolean>(() => hasSpeechRecognition());
+  // null while the async shader-f16 adapter probe is still in flight - kept
+  // distinct from `false` (checked, and confirmed absent).
+  const [shaderF16Supported, setShaderF16Supported] = useState<boolean | null>(null);
 
   const [storedModelId, setSelectedModelId] = useLocalStorageState<string>(
     SELECTED_MODEL_ID_STORAGE_KEY,
@@ -62,9 +67,20 @@ export default function App() {
   // localStorage is external data: validate it against the catalog before
   // trusting it, falling back to the device-specific default for any
   // unknown (e.g. removed or corrupted) id.
-  const selectedModelId = isKnownModelId(storedModelId)
+  const candidateModelId = isKnownModelId(storedModelId)
     ? storedModelId
     : getDefaultModelId();
+  // A model requiring shader-f16 can never finish initializing once the
+  // adapter probe confirms the feature is absent (issue #15: the download
+  // completes and only then does shader compilation fail). Redirect to an
+  // f16-free model instead of letting that failure happen on every load.
+  const candidateRequiresF16 = MODEL_CATALOG.find(
+    (model) => model.id === candidateModelId
+  )?.requiresF16;
+  const selectedModelId =
+    shaderF16Supported === false && candidateRequiresF16
+      ? getDefaultModelId(false)
+      : candidateModelId;
 
   const [engine, setEngine] = useState<MLCEngine | null>(null);
   const [isLoadingEngine, setIsLoadingEngine] = useState<boolean>(false);
@@ -114,10 +130,35 @@ export default function App() {
     engineRef.current = engine;
   }, [engine]);
 
+  // Probe shader-f16 support once per mount. Async because it requires
+  // requesting a GPUAdapter; the engine-loading effect below treats an
+  // unresolved probe as one more "not ready to start" precondition so it
+  // never begins loading a model whose f16 requirement hasn't been checked
+  // yet (issue #15).
+  useEffect(() => {
+    let cancelled = false;
+    hasShaderF16().then((supported) => {
+      if (!cancelled) {
+        setShaderF16Supported(supported);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Engine loading, re-run whenever the selected model changes.
   // Guarded against React.StrictMode double-invocation for the same model id.
   useEffect(() => {
     if (!webgpuSupported) {
+      return;
+    }
+
+    if (shaderF16Supported === null) {
+      // shader-f16 support hasn't been determined yet: selectedModelId may
+      // still change (from a saved f16-required id to an f16-free fallback)
+      // once it resolves - starting now could kick off an init run for a
+      // model we're about to redirect away from.
       return;
     }
 
@@ -200,7 +241,7 @@ export default function App() {
     } else {
       startInitIfCurrent();
     }
-  }, [webgpuSupported, selectedModelId]);
+  }, [webgpuSupported, shaderF16Supported, selectedModelId]);
 
   const handleMicToggle = () => {
     if (!speechSupported || !engine || engineError) return;
@@ -295,15 +336,18 @@ export default function App() {
             id="model-select"
             value={selectedModelId}
             onChange={(e) => setSelectedModelId(e.target.value)}
-            disabled={!webgpuSupported}
+            disabled={!webgpuSupported || shaderF16Supported === null}
             className="flex-1 min-w-0 text-sm border border-input rounded-md px-2 py-1 bg-transparent disabled:cursor-not-allowed disabled:opacity-50"
           >
             {/*
               ダウンロード量を先に出す。初回の待ち時間を決めるのはこちらで、
               GPUメモリ量だけを出すと回線が細い利用者を誤導する
               （Qwen2.5 0.5B は GPU 945MB だが DL は 265MB で最軽量）。
+              shader-f16 非対応環境では f16 必須モデルを選択肢から外す
+              （ダウンロードを完走させてからシェーダーのコンパイルで必ず
+              失敗させないため。issue #15）。
             */}
-            {MODEL_CATALOG.map((model) => (
+            {getSelectableModels(shaderF16Supported ?? true).map((model) => (
               <option key={model.id} value={model.id}>
                 {model.label}（DL {model.downloadMB}MB / GPU {model.vramMB}MB）
               </option>
