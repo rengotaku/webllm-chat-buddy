@@ -24,3 +24,10 @@ coverage
 *.sln
 *.sw?
 
+# Self-signed dev HTTPS cert/key (scripts/run-dev-https.sh, issue #21).
+# Generated outside the repo by default (~/.cache/webllm-chat-buddy/certs);
+# these patterns are a safety net only, in case WEBLLM_CERT_DIR is ever
+# pointed inside the repo.
+*.pem
+*.key
+

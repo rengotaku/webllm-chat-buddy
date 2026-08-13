@@ -1,4 +1,4 @@
-.PHONY: install compose-ui run build preview stop status open lint lint-fix format format-check \
+.PHONY: install compose-ui run run-https build preview stop status open lint lint-fix format format-check \
 	test test-watch test-cov check ci clean help
 
 # Default target
@@ -28,6 +28,10 @@ compose-ui:
 ## run: Start the Vite dev server
 run:
 	npm run dev
+
+## run-https: Start the dev server over HTTPS on 0.0.0.0 for LAN access (e.g. from a smartphone). Self-signed cert: browser will warn on every connection, see README
+run-https:
+	@PORT=$(PORT) scripts/run-dev-https.sh
 
 ## build: Build the production bundle
 build:
