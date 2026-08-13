@@ -25,7 +25,7 @@
 - WebGPU対応ブラウザ(Chrome / Edge 推奨。`chrome://gpu` でWebGPUが有効か確認できる)
 - マイク入力を使う場合はWeb Speech API対応ブラウザ(Chrome系)
 - Android: Android 12 以降 + Chrome 121 以降(WebGPU対応の最小要件)
-- **Linux の Chrome / Edge**: 既定ではGPUバックエンド(Vulkan)が無効になっており、ブラウザ自体はWebGPUに対応していてもGPUアダプタを取得できないことがある。その場合、Chromeでは `chrome://flags/#enable-vulkan`、Edgeでは `edge://flags/#enable-vulkan` を Enabled にしてブラウザを再起動する(この状態ではモデルを軽いものに変更しても解決しない)。それ以外のブラウザではGPUドライバやOSのグラフィックス設定を確認する
+- **Linux の Chrome / Edge**: 既定ではGPUバックエンド(Vulkan)が無効になっており、ブラウザ自体はWebGPUに対応していてもGPUアダプタを取得できないことがある。対処方法は2つあり、詳しくは後述の「[アプリを開く(Linux でGPUアダプタを取得できない場合)](#アプリを開くlinux-でgpuアダプタを取得できない場合)」を参照(この状態ではモデルを軽いものに変更しても解決しない)。それ以外のブラウザではGPUドライバやOSのグラフィックス設定を確認する
 - 非対応ブラウザ、およびGPUアダプタを取得できない場合はその旨のメッセージが表示され、チャット機能は無効化される
 
 スマートフォン幅にも対応している。
@@ -42,6 +42,26 @@ make run
 ```
 
 `http://localhost:5173` を開く。初回アクセス時にモデルのダウンロードが始まる（進捗バーが出る）。
+
+### アプリを開く(Linux でGPUアダプタを取得できない場合)
+
+前述のとおり、Linux の Chrome / Edge は既定でGPUバックエンド(Vulkan)が無効なため、`make run` の後に常用ブラウザでそのまま開くとGPUアダプタを取得できないことがある。対処方法は2つある。
+
+| 方法 | 影響範囲 |
+|---|---|
+| `make open`(推奨) | このアプリ専用のプロファイルのみ。常用ブラウザのプロファイル・設定・拡張・ログイン状態には影響しない |
+| `chrome://flags/#enable-vulkan`(Edgeは `edge://flags/#enable-vulkan`)を変更 | 常用ブラウザ全体のGPUバックエンド(他のサイト・タブにも影響する) |
+
+日常使いのブラウザのGPUバックエンドを変えるのは影響が大きいため、`make open` を推奨する。
+
+```bash
+make run    # 別ターミナルで dev サーバーを起動
+make open   # 専用インスタンスで開く
+```
+
+`make open` は `google-chrome` / `google-chrome-stable` / `chromium` / `chromium-browser` などの実行ファイルを自動検出し(実体の絶対パスを優先し、PATH上のコマンド名はフォールバックとして最後に試す。理由は後述)、専用のユーザープロファイル(既定 `~/.cache/webllm-chat-buddy/chrome-profile`。`WEBLLM_CHROME_PROFILE_DIR` 環境変数で変更可)を使って `--enable-features=Vulkan` 付きで起動する。プロファイルは永続化されるため、モデルのダウンロードキャッシュは毎回失われない。dev サーバーが起動していない場合や、Chrome/Chromium が見つからない場合はその旨のエラーで案内される。起動したブラウザプロセスの管理(終了など)は行わない。ポートは `make run` と同じ既定値(5173)を使い、`PORT` 環境変数で上書きできる(例: `make open PORT=3000`)。
+
+**自動検出が絶対パスを優先する理由**: PATH上の `google-chrome` 等は、GPUを使う他ジョブとのVRAM競合を避けるために既定で `--disable-gpu` を注入するラッパースクリプトに差し替えられていることがある。ラッパー経由で起動すると `--enable-features=Vulkan` を渡してもGPUが無効化されたまま起動してしまうため、`make open` は実体バイナリの絶対パス(`/opt/google/chrome/chrome` など)を優先する。それでも意図しない実行ファイルが選ばれる場合は `WEBLLM_CHROME_BIN=/path/to/chrome make open` で使用する実行ファイルを明示指定できる。
 
 ## モデルと初回ダウンロード量
 
